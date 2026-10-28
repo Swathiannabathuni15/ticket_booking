@@ -1,0 +1,123 @@
+import os
+from pathlib import Path
+
+# Must be set BEFORE the app is imported, so the app talks to the TEST database.
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/ticketdb_test"
+)
+
+import pytest  # noqa: E402
+import redis  # noqa: E402
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+
+from app.config import settings  # noqa: E402
+from app.db import SessionLocal, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import User  # noqa: E402
+from app.redis_client import get_redis  # noqa: E402
+
+TEST_REDIS_DB = 15  # separate from the dev DB (0) so test runs never collide with it
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _schema():
+    """Build the test schema through the real Alembic migrations, not
+    Base.metadata.create_all - this is what proves the migrations actually
+    match the models, instead of just trusting that they do."""
+    alembic_cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+    command.upgrade(alembic_cfg, "head")
+    yield
+    command.downgrade(alembic_cfg, "base")
+
+
+@pytest.fixture(autouse=True)
+def _clean_tables():
+    """Empty every table before each test so tests don't affect each other."""
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE payments, bookings, seats, events, users RESTART IDENTITY CASCADE"))
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_rate_limit_settings():
+    """Tests that tighten a rate limit to make it easy to trip must not leak
+    that change into other tests."""
+    original = {
+        "rate_limit_window_seconds": settings.rate_limit_window_seconds,
+        "rate_limit_login_per_window": settings.rate_limit_login_per_window,
+        "rate_limit_hold_per_window": settings.rate_limit_hold_per_window,
+        "rate_limit_booking_per_window": settings.rate_limit_booking_per_window,
+    }
+    yield
+    for key, value in original.items():
+        setattr(settings, key, value)
+
+
+@pytest.fixture(autouse=True)
+def _clean_redis():
+    """Flush the test Redis DB before each test, same reasoning as _clean_tables."""
+    r = redis.Redis(host="localhost", port=6379, db=TEST_REDIS_DB, decode_responses=True)
+    r.flushdb()
+    yield
+    r.close()
+
+
+def _test_redis() -> redis.Redis:
+    return redis.Redis(host="localhost", port=6379, db=TEST_REDIS_DB, decode_responses=True)
+
+
+app.dependency_overrides[get_redis] = _test_redis
+
+
+@pytest.fixture()
+def client():
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture()
+def db():
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def signup_and_login(client: TestClient, email: str, password: str = "password123") -> dict:
+    client.post("/auth/signup", json={"email": email, "password": password})
+    token = client.post("/auth/login", json={"email": email, "password": password}).json()[
+        "access_token"
+    ]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def admin_headers(client: TestClient, email: str = "admin@example.com") -> dict:
+    """Sign up, promote to admin directly in the DB (there's no HTTP endpoint
+    for that on purpose - see scripts/make_admin.py), then log in."""
+    headers = signup_and_login(client, email)
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email.lower()).one()
+        user.is_admin = True
+        db.commit()
+    return headers
+
+
+def hold_seat(client: TestClient, headers: dict, seat_id: int) -> dict:
+    r = client.post("/holds", json={"seat_id": seat_id}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def book_seat_pending(client: TestClient, headers: dict, seat_id: int) -> dict:
+    """Hold then book, leaving the booking in pending_payment - the state
+    every payment test starts from."""
+    hold_seat(client, headers, seat_id)
+    r = client.post("/bookings", json={"seat_id": seat_id}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()
