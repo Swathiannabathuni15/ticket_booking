@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from uuid import uuid4
 
 # Must be set BEFORE the app is imported, so the app talks to the TEST database.
 os.environ["DATABASE_URL"] = os.environ.get(
@@ -32,6 +33,14 @@ def _schema():
     alembic_cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
     command.upgrade(alembic_cfg, "head")
     yield
+    # Downgrading old migrations can't re-add NOT NULL columns to tables that
+    # still hold rows from the last test, so empty everything first.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, "
+            "bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, screens, theatres, "
+            "movies, users RESTART IDENTITY CASCADE"
+        ))
     command.downgrade(alembic_cfg, "base")
 
 
@@ -39,7 +48,12 @@ def _schema():
 def _clean_tables():
     """Empty every table before each test so tests don't affect each other."""
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE payments, bookings, seats, events, users RESTART IDENTITY CASCADE"))
+        conn.execute(text(
+            "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, "
+            "screens, theatres, movies, users RESTART IDENTITY CASCADE"
+        ))
+    from app.routers.showtimes import clear_seat_cache
+    clear_seat_cache()  # ids restart from 1 after TRUNCATE, so a stale cache would lie
     yield
 
 
@@ -52,6 +66,9 @@ def _restore_rate_limit_settings():
         "rate_limit_login_per_window": settings.rate_limit_login_per_window,
         "rate_limit_hold_per_window": settings.rate_limit_hold_per_window,
         "rate_limit_booking_per_window": settings.rate_limit_booking_per_window,
+        "rate_limit_share_pay_per_window": settings.rate_limit_share_pay_per_window,
+        "rate_limit_user_per_second": settings.rate_limit_user_per_second,
+        "rate_limit_payment_per_window": settings.rate_limit_payment_per_window,
     }
     yield
     for key, value in original.items():
@@ -108,16 +125,62 @@ def admin_headers(client: TestClient, email: str = "admin@example.com") -> dict:
     return headers
 
 
+def make_showtime_with_seats(
+    client: TestClient, rows: int = 1, seats_per_row: int = 1, price: float = 10.0
+) -> dict:
+    """Admin-creates a movie, theatre, screen and showtime in one call, and
+    returns the showtime id plus its seats (as returned by GET
+    /showtimes/{id}/seats) - the fixture every booking/hold/payment test
+    needs to get a bookable seat_id without repeating the catalogue setup.
+    """
+    headers = admin_headers(client, email=f"catalog-admin-{uuid4().hex}@example.com")
+    movie_id = client.post(
+        "/movies", json={"title": "Test Movie", "duration_minutes": 120}, headers=headers
+    ).json()["id"]
+    theatre_id = client.post(
+        "/theatres", json={"name": "Test Theatre", "city": "Testville"}, headers=headers
+    ).json()["id"]
+    row_letters = "ABCDEFGHIJ"
+    screen_rows = [
+        {"row": row_letters[i], "seats": ["standard"] * seats_per_row} for i in range(rows)
+    ]
+    screen_id = client.post(
+        "/screens",
+        json={"theatre_id": theatre_id, "name": "Screen 1", "rows": screen_rows},
+        headers=headers,
+    ).json()["id"]
+    showtime_id = client.post(
+        "/showtimes",
+        json={
+            "movie_id": movie_id,
+            "screen_id": screen_id,
+            "starts_at": "2030-01-01T18:00:00",
+            "prices": {"standard": price},
+        },
+        headers=headers,
+    ).json()["id"]
+    seats = client.get(f"/showtimes/{showtime_id}/seats").json()
+    return {"showtime_id": showtime_id, "seats": seats}
+
+
+def hold_seats(client: TestClient, headers: dict, seat_ids: list[int]) -> dict:
+    r = client.post("/holds", json={"seat_ids": seat_ids}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
 def hold_seat(client: TestClient, headers: dict, seat_id: int) -> dict:
-    r = client.post("/holds", json={"seat_id": seat_id}, headers=headers)
+    return hold_seats(client, headers, [seat_id])
+
+
+def book_seats_pending(client: TestClient, headers: dict, seat_ids: list[int]) -> dict:
+    """Hold then book, leaving the booking in pending_payment - the state
+    every payment test starts from."""
+    hold_seats(client, headers, seat_ids)
+    r = client.post("/bookings", json={"seat_ids": seat_ids}, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()
 
 
 def book_seat_pending(client: TestClient, headers: dict, seat_id: int) -> dict:
-    """Hold then book, leaving the booking in pending_payment - the state
-    every payment test starts from."""
-    hold_seat(client, headers, seat_id)
-    r = client.post("/bookings", json={"seat_id": seat_id}, headers=headers)
-    assert r.status_code == 201, r.text
-    return r.json()
+    return book_seats_pending(client, headers, [seat_id])

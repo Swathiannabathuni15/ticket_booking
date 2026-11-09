@@ -1,0 +1,38 @@
+# Whole stack in containers:  docker compose -f docker-compose.prod.yml up --build
+# Web UI -> http://localhost:8080   API docs -> http://localhost:8000/docs
+# (The dev docker-compose.yml only starts Postgres + Redis for local development.)
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: ticketdb }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 10 }
+  redis:
+    image: redis:7
+  api:
+    build: .
+    environment: &app-env
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ticketdb
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a long random string}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+    ports: ["8000:8000"]
+  worker:
+    build: .
+    command: python -m app.jobs.worker
+    environment: *app-env
+    depends_on: [api]
+  scheduler:
+    build: .
+    command: python -m app.jobs.scheduler_loop
+    environment: *app-env
+    depends_on: [api]
+  web:
+    build:
+      context: ./frontend
+      args: { VITE_API_URL: "${PUBLIC_API_URL:-http://localhost:8000}" }
+    ports: ["8080:80"]
+    depends_on: [api]
+volumes:
+  pgdata:

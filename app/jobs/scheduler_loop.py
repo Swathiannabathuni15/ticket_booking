@@ -10,10 +10,11 @@ import time
 
 from app.config import settings
 from app.jobs.queue import get_queue
-from app.jobs.tasks import expire_unpaid_bookings_job
+from app.jobs.tasks import expire_unpaid_bookings_job, send_due_reminders_job
 
 if __name__ == "__main__":
     queue = get_queue()
     while True:
         queue.enqueue(expire_unpaid_bookings_job)
+        queue.enqueue(send_due_reminders_job)   # "your movie starts soon" notifications
         time.sleep(settings.payment_sweep_interval_seconds)

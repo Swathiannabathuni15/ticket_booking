@@ -1,7 +1,15 @@
 """Request and response shapes (validated by Pydantic)."""
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+MAX_SEATS_PER_BOOKING = 8
+
+
+def _no_duplicate_seats(seat_ids: list[int]) -> list[int]:
+    if len(set(seat_ids)) != len(seat_ids):
+        raise ValueError("seat_ids must not contain duplicates")
+    return seat_ids
 
 
 class Credentials(BaseModel):
@@ -17,52 +25,152 @@ class TokenOut(BaseModel):
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    email: EmailStr
+    email: str | None = None
+    phone: str | None = None
     is_admin: bool
 
 
-class EventCreate(BaseModel):
+class OtpRequest(BaseModel):
+    phone: str = Field(pattern=r"^\+?[0-9]{10,15}$")
+
+
+class OtpRequestOut(BaseModel):
+    sent: bool = True
+    expires_in_seconds: int
+    # ONLY in demo mode (no SMS provider): the code, so the flow can be tried.
+    dev_otp: str | None = None
+
+
+class OtpVerify(BaseModel):
+    phone: str = Field(pattern=r"^\+?[0-9]{10,15}$")
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class MovieCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    duration_minutes: int = Field(gt=0, le=600)
+    poster_url: str | None = Field(default=None, max_length=500, pattern=r"^https?://")
+    genre: str = Field(default="", max_length=100)
+    language: str = Field(default="English", max_length=50)
+    rating: float | None = Field(default=None, ge=0, le=10)
+
+
+class MovieUpdate(BaseModel):
+    """Admin edits. Only the fields you send are changed."""
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    duration_minutes: int | None = Field(default=None, gt=0, le=600)
+    poster_url: str | None = Field(default=None, max_length=500, pattern=r"^https?://")
+    genre: str | None = Field(default=None, max_length=100)
+    language: str | None = Field(default=None, max_length=50)
+    rating: float | None = Field(default=None, ge=0, le=10)
+
+
+class MovieOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    title: str
+    duration_minutes: int
+    poster_url: str | None = None
+    genre: str = ""
+    language: str = "English"
+    rating: float | None = None
+
+
+class TheatreCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    venue: str = Field(min_length=1, max_length=200)
-    starts_at: datetime
-    rows: int = Field(ge=1, le=26)
-    seats_per_row: int = Field(ge=1, le=100)
-    price: float = Field(gt=0)
+    city: str = Field(min_length=1, max_length=100)
 
 
-class EventOut(BaseModel):
+class TheatreOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
-    venue: str
+    city: str
+
+
+class ScreenRow(BaseModel):
+    row: str = Field(min_length=1, max_length=5)
+    # One entry per column; a seat type (e.g. "regular", "premium") or null for an aisle gap.
+    seats: list[str | None] = Field(min_length=1, max_length=100)
+
+
+class ScreenCreate(BaseModel):
+    theatre_id: int
+    name: str = Field(min_length=1, max_length=100)
+    rows: list[ScreenRow] = Field(min_length=1, max_length=26)
+
+
+class ScreenOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    theatre_id: int
+    name: str
+    layout: list
+
+
+class ShowtimeCreate(BaseModel):
+    movie_id: int
+    screen_id: int
     starts_at: datetime
+    # seat type -> price, e.g. {"regular": 10.0, "premium": 15.0}; must cover
+    # every seat type used in the screen's layout.
+    prices: dict[str, float]
+
+
+class ShowtimeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    movie_id: int
+    screen_id: int
+    starts_at: datetime
+    movie_title: str
+    screen_name: str
+    theatre_name: str
+    theatre_id: int
+    city: str
 
 
 class SeatOut(BaseModel):
     id: int
     label: str
+    seat_type: str
     price: float
-    available: bool
+    # "available" | "held" | "held_by_me" | "booked"
+    status: str
+    available: bool  # convenience: status == "available"
 
 
 class HoldCreate(BaseModel):
-    seat_id: int
+    seat_ids: list[int] = Field(min_length=1, max_length=MAX_SEATS_PER_BOOKING)
+
+    _no_duplicates = field_validator("seat_ids")(_no_duplicate_seats)
 
 
 class HoldOut(BaseModel):
-    seat_id: int
+    seat_ids: list[int]
     ttl_seconds: int
 
 
 class BookingCreate(BaseModel):
-    seat_id: int
+    seat_ids: list[int] = Field(min_length=1, max_length=MAX_SEATS_PER_BOOKING)
+
+    _no_duplicates = field_validator("seat_ids")(_no_duplicate_seats)
 
 
 class BookingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    seat_id: int
+    showtime_id: int
+    seat_ids: list[int]
+    seat_labels: list[str]
+    movie_title: str
+    theatre_name: str
+    city: str
+    starts_at: datetime
+    total_cents: int
     status: str
+    # paid | processing (waiting for the bank / webhook) | failed | unpaid
+    payment_status: str = "unpaid"
     created_at: datetime
     payment_due_at: datetime | None = None
     paid_at: datetime | None = None
@@ -70,3 +178,55 @@ class BookingOut(BaseModel):
 
 class PaymentCreate(BaseModel):
     booking_id: int
+    # Demo "card": tok_ok | tok_decline | tok_timeout (the bank charges but our reply is lost).
+    payment_method: str = Field(default="tok_ok", pattern="^tok_(ok|decline|timeout)$")
+
+
+class SplitCreate(BaseModel):
+    friends: list[str] = Field(min_length=1, max_length=20)
+    include_owner: bool = True
+    mode: str = Field(default="equal", pattern="^(equal|custom)$")
+    # mode=custom: one amount in cents per share, owner first when include_owner.
+    custom_cents: list[int] | None = None
+
+    @field_validator("friends")
+    @classmethod
+    def _clean_names(cls, v: list[str]) -> list[str]:
+        v = [n.strip() for n in v]
+        if any(not n or len(n) > 100 for n in v):
+            raise ValueError("friend names must be 1-100 characters")
+        return v
+
+
+class ShareOut(BaseModel):
+    id: int
+    name: str
+    amount_cents: int
+    is_owner: bool
+    status: str
+    paid_at: datetime | None = None
+    # Owner-only view: a freshly signed link path. Omitted on the public view.
+    link: str | None = None
+
+
+class SplitOut(BaseModel):
+    id: int
+    booking_id: int
+    total_cents: int
+    status: str
+    paid_cents: int
+    shares: list[ShareOut]
+
+
+class ShareLinkView(BaseModel):
+    """What a friend sees on the public link: no emails, no booking internals."""
+    name: str
+    amount_cents: int
+    status: str
+    movie_title: str
+    starts_at: datetime
+    seats: list[str]
+
+
+class AdminBookingOut(BookingOut):
+    user_id: int

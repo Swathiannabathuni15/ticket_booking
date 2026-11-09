@@ -6,23 +6,14 @@ from datetime import datetime, timezone
 import redis
 
 from app.main import app
-from app.models import Event, Seat
+from app.models import Movie, Screen, Showtime, ShowtimeSeat, Theatre
 from app.redis_client import get_redis
-from tests.conftest import _test_redis, admin_headers, hold_seat, signup_and_login
-
-EVENT = {
-    "name": "Rock Night",
-    "venue": "Tokyo Dome",
-    "starts_at": "2030-01-01T18:00:00+09:00",
-    "rows": 1,
-    "seats_per_row": 1,
-    "price": 50.0,
-}
+from tests.conftest import _test_redis, hold_seat, make_showtime_with_seats, signup_and_login
 
 
 def make_event_with_one_seat(client, headers=None) -> int:
-    event_id = client.post("/events", json=EVENT, headers=admin_headers(client)).json()["id"]
-    return client.get(f"/events/{event_id}/seats").json()[0]["id"]
+    result = make_showtime_with_seats(client, rows=1, seats_per_row=1, price=50.0)
+    return result["seats"][0]["id"]
 
 
 def test_second_user_cannot_hold_an_already_held_seat(client):
@@ -31,7 +22,7 @@ def test_second_user_cannot_hold_an_already_held_seat(client):
     seat_id = make_event_with_one_seat(client, h1)
 
     hold_seat(client, h1, seat_id)
-    r = client.post("/holds", json={"seat_id": seat_id}, headers=h2)
+    r = client.post("/holds", json={"seat_ids": [seat_id]}, headers=h2)
     assert r.status_code == 409
 
 
@@ -40,7 +31,7 @@ def test_holding_your_own_seat_again_refreshes_it_instead_of_failing(client):
     seat_id = make_event_with_one_seat(client, h)
 
     hold_seat(client, h, seat_id)
-    r = client.post("/holds", json={"seat_id": seat_id}, headers=h)
+    r = client.post("/holds", json={"seat_ids": [seat_id]}, headers=h)
     assert r.status_code == 201
 
 
@@ -51,7 +42,7 @@ def test_booking_without_a_valid_hold_is_rejected(client, db):
 
     hold_seat(client, h1, seat_id)
     # h2 has no hold on this seat, so booking must be rejected even though the seat is free.
-    r = client.post("/bookings", json={"seat_id": seat_id}, headers=h2)
+    r = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=h2)
     assert r.status_code == 409
 
 
@@ -71,10 +62,10 @@ def test_a_successful_booking_releases_its_own_hold(client):
     seat_id = make_event_with_one_seat(client, h1)
 
     hold_seat(client, h1, seat_id)
-    booked = client.post("/bookings", json={"seat_id": seat_id}, headers=h1)
+    booked = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=h1)
     assert booked.status_code == 201
     # h1's hold is gone now, but the seat is booked, so h2 still can't hold it.
-    assert client.post("/holds", json={"seat_id": seat_id}, headers=h2).status_code == 409
+    assert client.post("/holds", json={"seat_ids": [seat_id]}, headers=h2).status_code == 409
 
 
 def test_a_retried_booking_succeeds_after_the_hold_is_used_up(client):
@@ -85,10 +76,10 @@ def test_a_retried_booking_succeeds_after_the_hold_is_used_up(client):
     headers = {**h, "Idempotency-Key": "retry-1"}
 
     hold_seat(client, h, seat_id)
-    first = client.post("/bookings", json={"seat_id": seat_id}, headers=headers)
+    first = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=headers)
     assert first.status_code == 201
 
-    retry = client.post("/bookings", json={"seat_id": seat_id}, headers=headers)
+    retry = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=headers)
     assert retry.status_code == 200
     assert retry.json()["id"] == first.json()["id"]
 
@@ -121,14 +112,24 @@ def test_a_late_release_does_not_delete_someone_elses_hold(client):
 
     # h1's release, arriving late, must not touch h2's hold.
     assert client.delete(f"/holds/{seat_id}", headers=h1).status_code == 204
-    assert client.post("/bookings", json={"seat_id": seat_id}, headers=h2).status_code == 201
+    assert client.post("/bookings", json={"seat_ids": [seat_id]}, headers=h2).status_code == 201
 
 
 def test_100_users_race_for_one_hold_exactly_one_wins(db):
-    event = Event(name="Last Seat", venue="Test", starts_at=datetime.now(timezone.utc))
-    db.add(event)
+    movie = Movie(title="Last Seat", duration_minutes=90)
+    theatre = Theatre(name="Test Theatre", city="Testville")
+    db.add_all([movie, theatre])
     db.flush()
-    seat = Seat(event_id=event.id, label="A1", price=10)
+    screen = Screen(theatre_id=theatre.id, name="Screen 1", layout=[{"row": "A", "seats": ["standard"]}])
+    db.add(screen)
+    db.flush()
+    showtime = Showtime(
+        movie_id=movie.id, screen_id=screen.id, starts_at=datetime.now(timezone.utc),
+        prices={"standard": 10},
+    )
+    db.add(showtime)
+    db.flush()
+    seat = ShowtimeSeat(showtime_id=showtime.id, row_label="A", seat_number=1, seat_type="standard", price=10)
     db.add(seat)
     db.commit()
     seat_id = seat.id
@@ -138,7 +139,7 @@ def test_100_users_race_for_one_hold_exactly_one_wins(db):
     def try_hold(user_id: int) -> str:
         r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
         try:
-            holds.acquire_hold(r, seat_id, user_id)
+            holds.acquire_holds(r, [seat_id], user_id)
             return "won"
         except holds.SeatHeldByOther:
             return "lost"
@@ -157,8 +158,7 @@ def test_redis_down_holds_fail_closed_but_login_still_works(client, db):
     503, but login/signup - which only consult Redis for rate limiting, and
     fail OPEN there - must keep working."""
     h = signup_and_login(client, "a@example.com")
-    event_id = client.post("/events", json=EVENT, headers=admin_headers(client)).json()["id"]
-    seat_id = client.get(f"/events/{event_id}/seats").json()[0]["id"]
+    seat_id = make_event_with_one_seat(client)
 
     def broken_redis():
         # Port 1 is not listening, so any call raises a ConnectionError fast
@@ -167,10 +167,10 @@ def test_redis_down_holds_fail_closed_but_login_still_works(client, db):
 
     app.dependency_overrides[get_redis] = broken_redis
     try:
-        hold_resp = client.post("/holds", json={"seat_id": seat_id}, headers=h)
+        hold_resp = client.post("/holds", json={"seat_ids": [seat_id]}, headers=h)
         assert hold_resp.status_code == 503
 
-        book_resp = client.post("/bookings", json={"seat_id": seat_id}, headers=h)
+        book_resp = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=h)
         assert book_resp.status_code == 503
 
         login_resp = client.post(

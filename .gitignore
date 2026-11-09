@@ -4,3 +4,8 @@ __pycache__/
 .env
 .idea/
 .pytest_cache/
+
+.vapid_keys.json
+
+movies.json
+posters.json

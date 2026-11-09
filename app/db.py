@@ -10,6 +10,7 @@ engine = create_engine(
     pool_size=settings.db_pool_size,
     max_overflow=0,
     pool_pre_ping=True,
+    pool_timeout=settings.db_pool_timeout_seconds,
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 

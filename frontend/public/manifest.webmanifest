@@ -1,0 +1,9 @@
+{
+  "name": "Ticketshow",
+  "short_name": "Ticketshow",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e63e62",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

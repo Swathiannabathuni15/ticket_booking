@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Booking, Seat, User
+from app.models import Booking, ShowtimeSeat, User
 from app.rate_limit_deps import limit_bookings_per_user
 from app.redis_client import get_redis
 from app.schemas import BookingCreate, BookingOut
@@ -27,17 +27,20 @@ def create_booking(
     user: User = Depends(get_current_user),
     r: redis.Redis = Depends(get_redis),
 ):
-    if db.get(Seat, body.seat_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
+    seat_ids = body.seat_ids
+    found = set(db.scalars(select(ShowtimeSeat.id).where(ShowtimeSeat.id.in_(seat_ids))).all())
+    missing = [sid for sid in seat_ids if sid not in found]
+    if missing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Seat(s) not found: {missing}")
 
-    # An idempotent retry already proved it held the seat; only a NEW booking
+    # An idempotent retry already proved it held the seats; only a NEW booking
     # needs a live hold (the first call used it up - see the `else` branch below).
     retrying = svc.find_by_key(db, user.id, idempotency_key) is not None
     if not retrying:
         try:
-            if not holds.has_valid_hold(r, body.seat_id, user.id):
+            if not holds.has_valid_holds(r, seat_ids, user.id):
                 raise HTTPException(
-                    status.HTTP_409_CONFLICT, "Hold the seat first: POST /holds"
+                    status.HTTP_409_CONFLICT, "Hold every seat first: POST /holds"
                 )
         except holds.HoldUnavailable:
             raise HTTPException(
@@ -46,18 +49,22 @@ def create_booking(
             )
 
     try:
-        booking, created = svc.book_seat(db, user.id, body.seat_id, idempotency_key)
-    except svc.SeatNotFound:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Seat not found")
-    except svc.SeatAlreadyBooked:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Seat already booked")
+        booking, created = svc.book_seats(db, user.id, seat_ids, idempotency_key)
+    except svc.SeatNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Seat not found: {exc.args[0]}")
+    except svc.SeatsSpanMultipleShowtimes:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "All seats in one booking must belong to the same showtime"
+        )
+    except svc.SeatAlreadyBooked as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat(s) already booked: {exc.args[0]}")
     if not created:
         response.status_code = status.HTTP_200_OK  # a retry, not a new booking
     else:
         try:
-            holds.release_hold(r, body.seat_id, user.id)
+            holds.release_holds(r, seat_ids, user.id)
         except holds.HoldUnavailable:
-            pass  # booking is already committed; the hold just expires on its own
+            pass  # booking is already committed; the holds just expire on their own
     return booking
 
 
