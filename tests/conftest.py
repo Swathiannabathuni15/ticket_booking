@@ -76,6 +76,16 @@ def _restore_rate_limit_settings():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_ai_keys():
+    """A key in .env must never make a test call a real AI service."""
+    saved = (settings.gemini_api_key, settings.anthropic_api_key, settings.agent_provider)
+    settings.gemini_api_key = settings.anthropic_api_key = ""
+    settings.agent_provider = "auto"
+    yield
+    settings.gemini_api_key, settings.anthropic_api_key, settings.agent_provider = saved
+
+
+@pytest.fixture(autouse=True)
 def _clean_redis():
     """Flush the test Redis DB before each test, same reasoning as _clean_tables."""
     r = redis.Redis(host="localhost", port=6379, db=TEST_REDIS_DB, decode_responses=True)

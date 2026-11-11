@@ -32,18 +32,41 @@ class Settings(BaseSettings):
 
     # Browser origins allowed to call the API (comma separated). Vite dev server by default.
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    # Any port on localhost is also allowed (Vite moves to 5174, 5175... if 5173 is busy).
-    # For a real deployment set this to "" and list the real website in CORS_ORIGINS.
-    cors_origin_regex: str = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Any port on localhost AND on private network addresses (192.168.x.x, 10.x.x.x,
+    # 172.16-31.x.x) is also allowed, so a phone on the same Wi-Fi can use the site in
+    # development. For a real deployment set this to "" and list the real website in CORS_ORIGINS.
+    cors_origin_regex: str = (
+        r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$"
+    )
 
-    # Booking assistant (optional). No key => POST /agent/chat answers 503.
+    # Booking assistant (optional). No key at all => POST /agent/chat answers 503.
     anthropic_api_key: str = ""
+    # Google Gemini works too. "auto" uses Gemini if GEMINI_API_KEY is set, else Anthropic.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    agent_provider: str = "auto"      # auto | gemini | anthropic
     agent_model: str = "claude-haiku-5-5"
     rate_limit_agent_per_window: int = 10
 
     # Mobile OTP sign-in. No SMS provider is wired up, so demo mode returns the
     # code in the API response. MUST be False in any real deployment.
     otp_dev_mode: bool = True
+    # How codes are really delivered. With nothing configured (and otp_dev_mode on) the
+    # code is shown on screen - demo only. See app/services/otp_delivery.py.
+    otp_sms_provider: str = "none"        # none | twilio | msg91
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""                 # a Twilio number like +1555..., or a Messaging Service SID (MG...)
+    msg91_auth_key: str = ""
+    msg91_template_id: str = ""           # an approved OTP template (India requires DLT approval)
+    smtp_host: str = ""                   # e.g. smtp.gmail.com (use an "app password", not your real password)
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    otp_brand: str = "Ticketshow"
     otp_ttl_seconds: int = 300
     otp_max_attempts: int = 5
 

@@ -1,5 +1,20 @@
 // API client: token handling + one place that turns HTTP failures into messages.
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+/** Where the backend is. From a phone, "localhost" is the PHONE itself, so when the page
+ *  was opened by the laptop's network address (e.g. http://192.168.1.20:5173) we point
+ *  at that same address on port 8000. An explicit VITE_API_URL still wins, except when it
+ *  says localhost but the page was opened from another address. */
+export function apiBase(env: string | undefined = import.meta.env.VITE_API_URL, loc: Pick<Location, "protocol" | "hostname"> = window.location): string {
+  const local = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (env) {
+    try {
+      const u = new URL(env);
+      if (!(local.has(u.hostname) && !local.has(loc.hostname))) return env.replace(/\/$/, "");
+      return `${loc.protocol}//${loc.hostname}:${u.port || "8000"}`;
+    } catch { /* fall through to the default */ }
+  }
+  return `${loc.protocol}//${loc.hostname}:8000`;
+}
+const BASE = typeof window === "undefined" ? "http://localhost:8000" : apiBase();  // no window in unit tests
 const TOKEN_KEY = "tb_token";
 
 export const tokenStore = {
@@ -73,11 +88,33 @@ export async function request<T>(
   return body as T;
 }
 
-export const uuid = () => crypto.randomUUID();
+/** A random UUID. crypto.randomUUID() only exists on https:// pages (and localhost), so on a
+ *  phone opening http://192.168... it is MISSING and calling it crashes the page. The
+ *  fallback builds a proper version-4 UUID from crypto.getRandomValues (which works on
+ *  plain http too), and only as a last resort from Math.random. */
+export function uuid(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === "function") c.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;   // version 4
+  b[8] = (b[8] & 0x3f) | 0x80;   // variant
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
 /** Demo cards: the bank approves, declines, or charges but the reply is lost. */
 export type PayMethod = "tok_ok" | "tok_decline" | "tok_timeout";
 
 // ---- types ----
+/** Who a one-time code is for: a phone number OR an email address. */
+export type OtpTarget = { phone: string } | { email: string };
+export type OtpSent = {
+  channel: "sms" | "email" | "screen";   // screen = demo mode, no provider configured
+  destination: string;                   // masked, safe to show
+  expires_in_seconds: number;
+  dev_otp: string | null;
+};
 export type User = { id: number; email: string | null; phone: string | null; is_admin: boolean };
 export type Movie = {
   id: number; title: string; duration_minutes: number;
@@ -120,10 +157,10 @@ export const api = {
     request<{ access_token: string }>("POST", "/auth/login", { body: { email, password }, auth: false }),
   me: () => request<User>("GET", "/me"),
   refresh: () => request<{ access_token: string }>("POST", "/auth/refresh"),
-  otpRequest: (phone: string) =>
-    request<{ expires_in_seconds: number; dev_otp: string | null }>("POST", "/auth/otp/request", { body: { phone }, auth: false }),
-  otpVerify: (phone: string, code: string) =>
-    request<{ access_token: string }>("POST", "/auth/otp/verify", { body: { phone, code }, auth: false }),
+  otpRequest: (target: OtpTarget) =>
+    request<OtpSent>("POST", "/auth/otp/request", { body: target, auth: false }),
+  otpVerify: (target: OtpTarget, code: string) =>
+    request<{ access_token: string }>("POST", "/auth/otp/verify", { body: { ...target, code }, auth: false }),
   cities: () => request<string[]>("GET", "/cities", { auth: false }),
   movies: (city?: string | null) =>
     request<Movie[]>("GET", `/movies?limit=100${city ? `&city=${encodeURIComponent(city)}` : ""}`, { auth: false }),

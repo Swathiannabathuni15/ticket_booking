@@ -59,5 +59,10 @@ def test_cors_allows_any_localhost_port_but_not_other_sites(client):
         return r.headers.get("access-control-allow-origin")
     assert origin_header("http://localhost:5174") == "http://localhost:5174"
     assert origin_header("http://127.0.0.1:5199") == "http://127.0.0.1:5199"
+    assert origin_header("http://192.168.1.20:5173") == "http://192.168.1.20:5173"      # a phone on the home Wi-Fi
+    assert origin_header("http://10.0.3.7:5173") == "http://10.0.3.7:5173"
+    assert origin_header("http://172.20.1.1:5173") == "http://172.20.1.1:5173"
+    assert origin_header("http://8.8.8.8:5173") is None                                  # a public address is not "local"
+    assert origin_header("http://172.40.1.1:5173") is None
     assert origin_header("https://evil.example.com") is None
     assert origin_header("http://localhost.evil.com") is None

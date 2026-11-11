@@ -35,11 +35,12 @@ def test_otp_validation_and_request_rate_limit(client):
     assert codes == [200, 200, 200, 429]
 
 
-def test_otp_dev_mode_off_hides_the_code(client):
+def test_otp_without_a_provider_and_demo_mode_off_is_refused(client):
+    """No SMS/email provider and demo mode off: say so, instead of generating a code nobody can read."""
     settings.otp_dev_mode = False
     try:
         r = client.post("/auth/otp/request", json={"phone": "9000000004"})
-        assert r.status_code == 200 and r.json()["dev_otp"] is None
+        assert r.status_code == 503
     finally:
         settings.otp_dev_mode = True
 

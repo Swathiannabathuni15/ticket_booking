@@ -1,7 +1,7 @@
 """Request and response shapes (validated by Pydantic)."""
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 MAX_SEATS_PER_BOOKING = 8
 
@@ -30,19 +30,36 @@ class UserOut(BaseModel):
     is_admin: bool
 
 
-class OtpRequest(BaseModel):
-    phone: str = Field(pattern=r"^\+?[0-9]{10,15}$")
+class _OtpTarget(BaseModel):
+    """Who the code is for: a phone number OR an email address (exactly one)."""
+    phone: str | None = Field(default=None, pattern=r"^\+?[0-9]{10,15}$")
+    email: EmailStr | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        if (self.phone is None) == (self.email is None):
+            raise ValueError("send either phone or email")
+        return self
+
+    @property
+    def identity(self) -> str:
+        return ("+" + self.phone.lstrip("+")) if self.phone else str(self.email).lower()
+
+
+class OtpRequest(_OtpTarget):
+    pass
 
 
 class OtpRequestOut(BaseModel):
     sent: bool = True
+    channel: str = "screen"          # sms | email | screen (demo: no provider configured)
+    destination: str = ""            # masked, e.g. +91*****3210
     expires_in_seconds: int
-    # ONLY in demo mode (no SMS provider): the code, so the flow can be tried.
+    # ONLY in demo mode: the code, so the flow can be tried without a provider.
     dev_otp: str | None = None
 
 
-class OtpVerify(BaseModel):
-    phone: str = Field(pattern=r"^\+?[0-9]{10,15}$")
+class OtpVerify(_OtpTarget):
     code: str = Field(pattern=r"^[0-9]{6}$")
 
 

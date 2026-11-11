@@ -3,6 +3,7 @@ import { BrowserRouter, Link, Route, Routes, useLocation } from "react-router-do
 import { AuthProvider, useAuth } from "./auth";
 import { CityProvider } from "./city";
 import Background from "./components/Background";
+import ErrorBoundary from "./components/ErrorBoundary";
 import ChatWidget from "./components/ChatWidget";
 import Reminders from "./components/Reminders";
 import Navbar from "./components/Navbar";
@@ -33,6 +34,7 @@ function Shell() {
       <Background />
       <Navbar search={search} onSearch={setSearch} />
       <main>
+        <ErrorBoundary>
         <Routes>
           <Route path="/" element={<MoviesPage search={search} />} />
           <Route path="/movies/:id" element={<MovieShowtimesPage />} />
@@ -44,6 +46,7 @@ function Shell() {
           <Route path="/pay/share/:token" element={<SharePay />} />
           <Route path="*" element={<p>Page not found. <Link to="/">Home</Link></p>} />
         </Routes>
+        </ErrorBoundary>
       </main>
       <footer className="footer">
         This product uses the TMDB API but is not endorsed or certified by TMDB. Demo project: no real payments.

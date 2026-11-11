@@ -102,6 +102,7 @@ export default function SeatMap({ seats, selected, onSeatClick, onPreview }: Pro
         </div>
       </div>
 
+      <p className="seat-hint muted small">← Swipe sideways to see every seat →</p>
       <div className="legend">
         <Legend cls="available" text="Available" />
         <Legend cls="selected" text="Selected" />

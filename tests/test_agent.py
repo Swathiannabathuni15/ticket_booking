@@ -159,3 +159,30 @@ def test_rate_limited_and_length_capped(client, use_llm):
     finally:
         settings.rate_limit_agent_per_window = 10
     assert client.post("/agent/chat", json={"message": "x" * 1001}, headers=h).status_code == 422
+
+
+def test_search_by_language_and_city_and_showtimes_by_title(client):
+    """The tools the assistant relies on to answer from real data (no guessing)."""
+    import json as _json
+    from app.db import SessionLocal
+    from app.models import User
+    adm = admin_headers(client, "tools-admin@example.com")
+    make = lambda title, lang, city: None
+    m1 = client.post("/movies", json={"title": "418", "duration_minutes": 100, "language": "Telugu", "genre": "Horror"}, headers=adm).json()
+    client.post("/movies", json={"title": "Other", "duration_minutes": 100, "language": "Hindi"}, headers=adm)
+    th = client.post("/theatres", json={"name": "T1", "city": "Hyderabad"}, headers=adm).json()
+    sc = client.post("/screens", json={"theatre_id": th["id"], "name": "S", "rows": [{"row": "A", "seats": ["x"]}]}, headers=adm).json()
+    client.post("/showtimes", json={"movie_id": m1["id"], "screen_id": sc["id"], "starts_at": "2030-01-01T18:00:00", "prices": {"x": 5}}, headers=adm)
+    client.post("/showtimes", json={"movie_id": m1["id"], "screen_id": sc["id"], "starts_at": "2020-01-01T18:00:00", "prices": {"x": 5}}, headers=adm)
+    with SessionLocal() as db:
+        u = User(email="t@example.com", password_hash="x"); db.add(u); db.commit()
+        run = lambda name, **a: _json.loads(svc.run_tool(db, None, u, name, a))["untrusted_data"]
+        assert [m["title"] for m in run("search_movies", query="telugu")] == ["418"]           # by language
+        assert [m["title"] for m in run("search_movies", query="horror")] == ["418"]           # by genre
+        assert [m["title"] for m in run("search_movies", city="Hyderabad")] == ["418"]         # only what shows in the city
+        assert run("search_movies", city="Mumbai") == []
+        shows = run("list_showtimes", movie_title="418", city="Hyderabad")                      # a numeric TITLE is not an id
+        assert len(shows) == 1 and shows[0]["theatre"] == "T1" and shows[0]["starts_at"].startswith("2030")   # past show hidden
+        assert run("list_showtimes", movie_id=m1["id"]) == shows
+        assert run("list_showtimes", movie_title="Nope") == []
+        assert "error" in _json.loads(svc.run_tool(db, None, u, "list_showtimes", {}))

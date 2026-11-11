@@ -1,4 +1,11 @@
-"""Real posters, runtimes, genres and ratings from TMDB, in three steps.
+"""Real posters, runtimes, genres and ratings, from OMDb (IMDb data) or TMDB.
+
+OMDb  (works on most networks; the IMDb rating):
+     OMDB_API_KEY=... python scripts/fetch_posters.py all --source omdb
+TMDB  (some networks block it - see the three steps below):
+     TMDB_API_KEY=... python scripts/fetch_posters.py all --source tmdb
+
+TMDB in three steps.
 
 Why three steps: only the TMDB lookup needs to reach TMDB. Some networks (many
 Indian internet providers, some company networks) block it, so the lookup can run
@@ -19,12 +26,15 @@ import argparse
 import json
 import os
 import sys
+import time
 
 import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 EMAIL, PASSWORD = "admin@demo-cinema.com", "demo-password-1"
 ALLOWED_FIELDS = ("poster_url", "duration_minutes", "genre", "rating")
+# A poster link in a result file may only point at these image servers.
+ALLOWED_POSTER_HOSTS = ("https://image.tmdb.org/", "https://m.media-amazon.com/")
 
 
 def list_movies(api) -> list[dict]:
@@ -39,14 +49,18 @@ def list_movies(api) -> list[dict]:
 
 def apply_posters(api, headers: dict, entries: list[dict]) -> int:
     """PATCH each movie with the looked-up fields. Only known fields are sent, and a
-    poster must come from TMDB's image server (the file can't point anywhere else)."""
+    poster must come from a known image server (the file can't point anywhere else)."""
     done = 0
     for e in entries:
         patch = {k: e[k] for k in ALLOWED_FIELDS if k in e}
-        if not str(patch.get("poster_url", "")).startswith("https://image.tmdb.org/"):
-            print(f"  skipped {e.get('title')}: poster is not a TMDB image link")
+        if not str(patch.get("poster_url", "")).startswith(ALLOWED_POSTER_HOSTS):
+            print(f"  skipped {e.get('title')}: poster is not from a known image server")
             continue
-        r = api.patch(f"/movies/{e['id']}", json=patch, headers=headers)
+        for _ in range(20):                      # the API limits each user per second: wait and retry
+            r = api.patch(f"/movies/{e['id']}", json=patch, headers=headers)
+            if r.status_code != 429:
+                break
+            time.sleep(float(r.headers.get("Retry-After", "1")))
         if r.status_code == 200:
             done += 1
             print(f"  ok  {e.get('title')}")
@@ -73,11 +87,13 @@ def main():
     ap.add_argument("file", nargs="?", default=None)
     ap.add_argument("--base", default="http://localhost:8000")
     ap.add_argument("--all-movies", action="store_true")
+    ap.add_argument("--language", help="only handle movies in this language, e.g. Telugu")
+    ap.add_argument("--source", choices=["omdb", "tmdb"], default="omdb", help="where `all` looks movies up")
     a = ap.parse_args()
 
     api, headers = connect(a.base)
     if a.command == "export":
-        movies = [m for m in list_movies(api) if a.all_movies or not m["poster_url"]]
+        movies = [m for m in list_movies(api) if (a.all_movies or not m["poster_url"]) and (not a.language or m["language"] == a.language)]
         out = a.file or "movies.json"
         with open(out, "w") as f:
             json.dump([{k: m[k] for k in ("id", "title", "language", "genre")} for m in movies], f, indent=2)
@@ -93,13 +109,15 @@ def main():
             for t in data["unmatched"]:
                 print("   -", t)
     else:
-        import tmdb_lookup
-        key = os.environ.get("TMDB_API_KEY", "").strip()
+        lookup = __import__("omdb_lookup" if a.source == "omdb" else "tmdb_lookup")
+        key = os.environ.get("OMDB_API_KEY" if a.source == "omdb" else "TMDB_API_KEY", "").strip()
         if not key:
-            sys.exit("Set TMDB_API_KEY first.")
-        movies = [m for m in list_movies(api) if a.all_movies or not m["poster_url"]]
-        found, unmatched = tmdb_lookup.lookup_movies(movies, key)
-        print(f"\nUpdated {apply_posters(api, headers, found)} movies; {len(unmatched)} not matched.")
+            sys.exit(f"Set {'OMDB' if a.source == 'omdb' else 'TMDB'}_API_KEY first.")
+        movies = [m for m in list_movies(api) if (a.all_movies or not m["poster_url"]) and (not a.language or m["language"] == a.language)]
+        found, unmatched = lookup.lookup_movies(movies, key)
+        print(f"\nUpdated {apply_posters(api, headers, found)} movies; {len(unmatched)} not matched (left as they were):")
+        for t in unmatched:
+            print("   -", t)
 
 
 if __name__ == "__main__":

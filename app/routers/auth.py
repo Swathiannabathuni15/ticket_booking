@@ -16,7 +16,7 @@ from app.rate_limit_deps import (
 from app.config import settings
 from app.redis_client import get_redis
 from app.schemas import Credentials, OtpRequest, OtpRequestOut, OtpVerify, TokenOut, UserOut
-from app.services import rate_limit
+from app.services import otp_delivery, rate_limit
 from app.security import create_access_token, hash_password, verify_password
 
 router = APIRouter(tags=["auth"])
@@ -64,62 +64,81 @@ def me(user: User = Depends(get_current_user)):
     return user
 
 
-# ---- mobile OTP sign-in -------------------------------------------------
-# Demo-grade: no SMS provider. In otp_dev_mode the code comes back in the
-# response (and the log) so the flow can be tried; with it off, the code is
-# only generated and stored, and a real SMS sender would have to be added
-# where marked. Codes: 6 digits, single use, 5 minutes, 5 wrong guesses max.
+# ---- one-time-code sign-in (phone by SMS, or email) -----------------------
+# Codes: 6 digits, single use, 5 minutes, 5 wrong guesses max, 3 codes/minute per
+# phone or email. Delivery: SMS (Twilio / MSG91) or email (SMTP) when configured
+# (see app/services/otp_delivery.py). With nothing configured and otp_dev_mode on,
+# the code comes back in the response so the demo works - never do that in production.
 log = logging.getLogger("auth.otp")
-
-
-def _norm(phone: str) -> str:
-    return "+" + phone.lstrip("+")
 
 
 @router.post("/auth/otp/request", response_model=OtpRequestOut, dependencies=[Depends(limit_otp_request_per_phone)])
 def otp_request(body: OtpRequest, r: redis.Redis = Depends(get_redis)):
-    phone = _norm(body.phone)
+    who = body.identity
+    is_email = body.email is not None
+    can_send = otp_delivery.email_configured() if is_email else otp_delivery.sms_configured()
+    if not can_send and not settings.otp_dev_mode:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"Sending codes by {'email' if is_email else 'SMS'} isn't set up on this server")
     try:
-        # at most 3 codes per phone per minute: stops SMS-bombing someone's number
-        rate_limit.check(r, f"otp-req:{phone}", 3, 60)
+        # at most 3 codes per identity per minute: stops flooding someone's phone or inbox
+        rate_limit.check(r, f"otp-send:{who}", 3, 60)
         code = f"{secrets.randbelow(1_000_000):06d}"
-        r.set(f"otp:{phone}", code, ex=settings.otp_ttl_seconds)
-        r.delete(f"otp-tries:{phone}")
+        r.set(f"otp:{who}", code, ex=settings.otp_ttl_seconds)
+        r.delete(f"otp-tries:{who}")
     except rate_limit.RateLimitExceeded as exc:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many codes requested, try again later",
                             headers={"Retry-After": str(exc.retry_after_seconds)})
     except redis.exceptions.RedisError:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in by phone is temporarily unavailable")
-    # TODO real deployment: send `code` by SMS here and keep otp_dev_mode off.
-    if settings.otp_dev_mode:
-        log.info("DEV OTP for %s: %s", phone, code)
-    return OtpRequestOut(expires_in_seconds=settings.otp_ttl_seconds, dev_otp=code if settings.otp_dev_mode else None)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in by code is temporarily unavailable")
+
+    channel = "screen"
+    if can_send:
+        try:
+            (otp_delivery.send_email if is_email else otp_delivery.send_sms)(who, code)
+            channel = "email" if is_email else "sms"
+        except otp_delivery.DeliveryFailed:
+            r.delete(f"otp:{who}")          # nothing was delivered, so the code is useless
+            if not settings.otp_dev_mode:
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, "We couldn't send the code. Please try again.")
+    if settings.otp_dev_mode and channel == "screen":
+        r.set(f"otp:{who}", code, ex=settings.otp_ttl_seconds)
+        log.info("DEV code for %s: %s", who, code)
+    return OtpRequestOut(
+        channel=channel, destination=otp_delivery.mask(who), expires_in_seconds=settings.otp_ttl_seconds,
+        dev_otp=code if (settings.otp_dev_mode and channel == "screen") else None,
+    )
 
 
 @router.post("/auth/otp/verify", response_model=TokenOut, dependencies=[Depends(limit_otp_verify_per_phone)])
 def otp_verify(body: OtpVerify, db: Session = Depends(get_db), r: redis.Redis = Depends(get_redis)):
-    phone = _norm(body.phone)
+    who = body.identity
     bad = HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong or expired code")
     try:
-        tries = r.incr(f"otp-tries:{phone}")
-        r.expire(f"otp-tries:{phone}", settings.otp_ttl_seconds)
+        tries = r.incr(f"otp-tries:{who}")
+        r.expire(f"otp-tries:{who}", settings.otp_ttl_seconds)
         if tries > settings.otp_max_attempts:
-            r.delete(f"otp:{phone}")  # too many guesses: burn the code
+            r.delete(f"otp:{who}")  # too many guesses: burn the code
             raise bad
-        stored = r.get(f"otp:{phone}")
+        stored = r.get(f"otp:{who}")
         if stored is None or not secrets.compare_digest(stored, body.code):
             raise bad
-        r.delete(f"otp:{phone}", f"otp-tries:{phone}")  # single use
+        r.delete(f"otp:{who}", f"otp-tries:{who}")  # single use
     except redis.exceptions.RedisError:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in by phone is temporarily unavailable")
-    user = db.scalar(select(User).where(User.phone == phone))
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in by code is temporarily unavailable")
+    column = User.email if body.email is not None else User.phone
+    user = db.scalar(select(User).where(column == who))
     if user is None:
-        # An unguessable password: phone accounts sign in by OTP only.
-        user = User(phone=phone, password_hash=hash_password(secrets.token_urlsafe(32)))
+        # An unguessable password: code-only accounts sign in with a code.
+        user = User(password_hash=hash_password(secrets.token_urlsafe(32)))
+        if body.email is not None:
+            user.email = who
+        else:
+            user.phone = who
         db.add(user)
         try:
             db.commit()
         except IntegrityError:  # two first-time verifies racing
             db.rollback()
-            user = db.scalar(select(User).where(User.phone == phone))
+            user = db.scalar(select(User).where(column == who))
     return TokenOut(access_token=create_access_token(user.id))

@@ -60,16 +60,16 @@ python scripts/seed_demo.py
 python scripts/seed_telugu.py
 ```
 
-**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones, make a free account at themoviedb.org, create an API key, then run:
+**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones with IMDb data, get a free key at omdbapi.com/apikey.aspx (click the activation link in the email, the key doesn't work before that), then run:
 ```
-TMDB_API_KEY=your-key python scripts/fetch_posters.py
+OMDB_API_KEY=your-key python scripts/fetch_posters.py all --source omdb --language Telugu
 ```
-It also fills in real runtimes, genres and ratings. It only uses a poster when the match is certain, and lists the ones it was unsure about, so you can set those by hand in the Admin page. (We don't copy posters from BookMyShow or Google. They are copyrighted, so we use TMDB, which allows this.)
+`--language Telugu` keeps it to the real Telugu releases. The made-up demo movies (Midnight Express and so on) share names with real films, so leave them alone.
+It also fills in the IMDb rating, runtime and genre. It only uses a poster when the match is certain, and lists the ones it was unsure about, so you can set those by hand in the Admin page. Small regional films are often missing from OMDb. The posters are linked from IMDb's image server, which is fine for a personal demo project but is not licensed for a commercial product. (TMDB works too: `--source tmdb`, but some networks block it.)
 
 **6. Start the website** (another new terminal)
 ```
 cd frontend
-echo "VITE_API_URL=http://localhost:8000" > .env
 npm install
 npm run dev
 ```
@@ -93,7 +93,64 @@ npm run dev
   python -m app.jobs.scheduler_loop
   python -m app.jobs.worker
   ```
-- **Turn on the AI assistant.** Put `ANTHROPIC_API_KEY=your-key` in a file called `.env` in the project folder, then restart the backend. Without it, the chat says the assistant is not set up.
+- **Turn on the AI assistant.** Put one line in a file called `.env` in the project folder, then restart the backend:
+  ```
+  GEMINI_API_KEY=your-key-here
+  ```
+  (Free key from Google AI Studio. `ANTHROPIC_API_KEY=...` works too. If both are set, Gemini is used.) Without a key, the chat says the assistant is not set up. `.env` is never committed to git.
+
+## Use it on your phone
+
+The website is built for phones too (two-column movie grid, swipe-sideways seat map, pop-ups that slide up, big tap buttons).
+
+To open it from a phone on the **same Wi-Fi** as your laptop:
+
+1. Find the laptop's address: `hostname -I` (use the first one, like `192.168.1.20`).
+2. Start the backend so it can be reached from other devices (instead of the normal command):
+   ```
+   uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0
+   ```
+3. Start the website for the network:
+   ```
+   cd frontend
+   npm run dev:phone
+   ```
+4. On the phone open `http://192.168.1.20:5173` (your address, port 5173).
+
+If it doesn't open: some office or guest Wi-Fi blocks devices from talking to each other, and a firewall on the laptop can block ports 5173 and 8000. A phone hotspot shared with the laptop works around the first problem. Only use this on a network you trust.
+
+Notifications are the one thing that does **not** work this way: browsers only allow them on `https://` addresses, so a phone over plain `http://192.168...` can't get them (see "Things to know").
+
+## Send real sign-in codes (optional)
+
+Out of the box the code is shown on screen (demo mode). To really send it, put settings in your `.env` file and restart the backend. Set `OTP_DEV_MODE=false` once real sending works, so the code is no longer shown on screen.
+
+**By email** (free, easiest). A Gmail account works if you turn on 2-step verification and create an "app password" (Google Account > Security > App passwords):
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASSWORD=your-16-letter-app-password
+SMTP_FROM=you@gmail.com
+```
+On the sign-in window choose "Continue with Email" then "Email me a code instead".
+
+**By SMS** needs a paid account with an SMS company:
+```
+OTP_SMS_PROVIDER=twilio
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM=+1xxxxxxxxxx
+```
+or, for India:
+```
+OTP_SMS_PROVIDER=msg91
+MSG91_AUTH_KEY=...
+MSG91_TEMPLATE_ID=...
+```
+Be honest with yourself about these: a Twilio trial account only texts numbers you have verified, and in India MSG91 (and other companies) require an approved message template (called DLT). The SMS code is written from their public guides but has **not** been run against a real account here. The email code was tested against a real mail-server connection (a local one).
+
+Codes work once, last 5 minutes, allow 5 wrong tries, and you can ask for at most 3 per minute.
 
 ## Tests
 
@@ -117,7 +174,7 @@ The second test mostly shows one laptop running out of power. To run it yourself
 
 - **Payments are pretend.** The bank is a simulation. The safety logic is real, but it has only been tested against the simulation, not a real bank.
 - **Google and Apple sign in** buttons are shown but turned off. They need keys we don't have.
-- **Phone sign in is a demo.** No SMS is sent. The code appears on screen.
+- **Sign-in codes are shown on screen** until you set up an email or SMS provider (see above).
 - **Telugu movie list** comes from public release calendars, not from BookMyShow (it blocks automatic reading). Dates in those calendars disagree. Genres and ratings are blank where we didn't know them, and runtimes are placeholders.
 - **Posters are generated** from the movie title until you run the TMDB poster script (needs your own free key) or an admin pastes an image link.
 - **Notifications on a phone need https.** Browsers only allow them on `https://` addresses (and `localhost`, which is only your own computer). So they work on this laptop now, but a phone can only get them after the site is put online with https. On an iPhone you must also "Add to Home Screen" first. If notifications are not turned on, a small popup appears instead while the site is open.

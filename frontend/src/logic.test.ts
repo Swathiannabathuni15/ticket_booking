@@ -97,3 +97,40 @@ describe("reminders + directions", () => {
       "https://www.google.com/maps/dir/?api=1&destination=Prasads%20Multiplex%2C%20Hyderabad");
   });
 });
+
+import { apiBase } from "./api";
+describe("apiBase (so a phone finds the backend)", () => {
+  const pc = { protocol: "http:", hostname: "localhost" };
+  const phone = { protocol: "http:", hostname: "192.168.1.20" };
+  it("uses the page's own address when nothing is configured", () => {
+    expect(apiBase(undefined, pc)).toBe("http://localhost:8000");
+    expect(apiBase(undefined, phone)).toBe("http://192.168.1.20:8000");
+  });
+  it("replaces a localhost setting when the page was opened from another address", () => {
+    expect(apiBase("http://localhost:8000", pc)).toBe("http://localhost:8000");
+    expect(apiBase("http://localhost:8000", phone)).toBe("http://192.168.1.20:8000");
+  });
+  it("keeps a real configured address", () => {
+    expect(apiBase("https://api.example.com/", phone)).toBe("https://api.example.com");
+  });
+});
+
+import { uuid } from "./api";
+describe("uuid works without crypto.randomUUID (a phone on plain http)", () => {
+  const RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  it("builds a valid v4 UUID from getRandomValues when randomUUID is missing", () => {
+    const real = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", { value: { getRandomValues: real.getRandomValues.bind(real) }, configurable: true });
+    try {
+      const a = uuid(), b = uuid();
+      expect(a).toMatch(RE);
+      expect(a).not.toBe(b);
+    } finally { Object.defineProperty(globalThis, "crypto", { value: real, configurable: true }); }
+  });
+  it("still works with no crypto at all (last resort)", () => {
+    const real = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    try { expect(uuid()).toMatch(RE); } finally { Object.defineProperty(globalThis, "crypto", { value: real, configurable: true }); }
+  });
+  it("uses the native one when available", () => { expect(uuid()).toMatch(RE); });
+});

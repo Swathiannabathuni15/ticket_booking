@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, SESSION_EXPIRED, tokenStore, type User } from "./api";
+import { api, SESSION_EXPIRED, tokenStore, type OtpTarget, type User } from "./api";
 import AuthModal from "./pages/Auth";
 
 type AuthCtx = {
@@ -10,7 +10,7 @@ type AuthCtx = {
   openSignIn: (after?: string) => void;
   loginWithPassword: (email: string, password: string) => Promise<void>;
   signupWithPassword: (email: string, password: string) => Promise<void>;
-  loginWithOtp: (phone: string, code: string) => Promise<void>;
+  loginWithOtp: (target: OtpTarget, code: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -59,8 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loginWithPassword(email, password);
   }, [loginWithPassword]);
 
-  const loginWithOtp = useCallback(async (phone: string, code: string) => {
-    await finish((await api.otpVerify(phone, code)).access_token);
+  const loginWithOtp = useCallback(async (target: OtpTarget, code: string) => {
+    await finish((await api.otpVerify(target, code)).access_token);
   }, [finish]);
 
   const logout = useCallback(() => { tokenStore.clear(); setUser(null); }, []);

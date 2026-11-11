@@ -41,11 +41,11 @@ def limit_signup_per_email(body: Credentials, r: redis.Redis = Depends(get_redis
 
 
 def limit_otp_request_per_phone(body: OtpRequest, r: redis.Redis = Depends(get_redis)) -> None:
-    _limit_identity(r, "otp-req", body.phone, settings.rate_limit_login_per_window)
+    _limit_identity(r, "otp-req", body.identity, settings.rate_limit_login_per_window)
 
 
 def limit_otp_verify_per_phone(body: OtpVerify, r: redis.Redis = Depends(get_redis)) -> None:
-    _limit_identity(r, "otp-verify", body.phone, settings.rate_limit_login_per_window)
+    _limit_identity(r, "otp-verify", body.identity, settings.rate_limit_login_per_window)
 
 
 def limit_payments_per_user(user: User = Depends(get_current_user), r: redis.Redis = Depends(get_redis)) -> None:
