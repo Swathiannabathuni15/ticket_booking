@@ -7,13 +7,15 @@
 Then: open the printed link, book seats, pay. Within a minute of the show being
 15 minutes away, the popup appears (keep the website open in a tab).
 """
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
 BASE = "http://localhost:8000"
-EMAIL, PASSWORD = "admin@demo-cinema.com", "demo-password-1"
+EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
+PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
 MINUTES = int(sys.argv[1]) if len(sys.argv) > 1 else 12
 
 

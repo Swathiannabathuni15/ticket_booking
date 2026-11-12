@@ -31,7 +31,8 @@ import time
 import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-EMAIL, PASSWORD = "admin@demo-cinema.com", "demo-password-1"
+EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
+PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
 ALLOWED_FIELDS = ("poster_url", "duration_minutes", "genre", "rating")
 # A poster link in a result file may only point at these image servers.
 ALLOWED_POSTER_HOSTS = ("https://image.tmdb.org/", "https://m.media-amazon.com/")

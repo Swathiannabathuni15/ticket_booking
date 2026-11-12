@@ -16,6 +16,13 @@ async def lifespan(_app: FastAPI):
     # Schema is created and changed by Alembic migrations now (see migrations/
     # and README "Migrations"), not by the app at startup. Run
     # `alembic upgrade head` before starting the API.
+    if settings.environment == "production":
+        problems = settings.production_problems()
+        if problems:
+            raise RuntimeError("Refusing to start in production:\n - " + "\n - ".join(problems))
+    if settings.background_jobs == "inprocess":
+        from app.jobs import inprocess
+        inprocess.start()
     yield
 
 

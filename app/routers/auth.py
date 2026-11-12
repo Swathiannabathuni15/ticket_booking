@@ -128,6 +128,9 @@ def otp_verify(body: OtpVerify, db: Session = Depends(get_db), r: redis.Redis = 
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in by code is temporarily unavailable")
     column = User.email if body.email is not None else User.phone
     user = db.scalar(select(User).where(column == who))
+    if user is not None and user.is_admin:
+        # A code sent to an inbox/phone is a weaker proof than a password; never let it open an admin account.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin accounts must sign in with a password")
     if user is None:
         # An unguessable password: code-only accounts sign in with a code.
         user = User(password_hash=hash_password(secrets.token_urlsafe(32)))

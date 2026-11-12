@@ -13,6 +13,7 @@ WHAT IS NOT KNOWN
     from the title.
 Safe to re-run: titles that already exist are skipped.
 """
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -21,7 +22,8 @@ import httpx
 sys.path.insert(0, ".")
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-EMAIL, PASSWORD = "admin@demo-cinema.com", "demo-password-1"
+EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
+PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
 
 # (title, genre-if-seen)
 MOVIES = [

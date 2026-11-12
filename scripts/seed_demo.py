@@ -5,6 +5,7 @@ Creates an admin (admin@demo-cinema.com / demo-password-1), 6 movies and, in 5 c
 a theatre with a 272-seat screen (3 price tiers, aisles) and 3 showtimes a day for 3 days.
 Safe to re-run: it adds another set each time.
 """
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,8 @@ import httpx
 sys.path.insert(0, ".")
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-EMAIL, PASSWORD = "admin@demo-cinema.com", "demo-password-1"
+EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
+PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
 
 
 def patient(client: httpx.Client) -> httpx.Client:

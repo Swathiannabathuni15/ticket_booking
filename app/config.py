@@ -1,9 +1,16 @@
 """App settings, read from environment variables or a .env file."""
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # "production" turns on startup safety checks (see production_problems below).
+    environment: str = "development"
+    # off = run the worker and scheduler yourself; inprocess = the web server runs the
+    # cleanup / reminder loop itself (one process: fits free hosting).
+    background_jobs: str = "off"
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ticketdb"
     jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"
@@ -96,6 +103,28 @@ class Settings(BaseSettings):
     split_link_ttl_hours: int = 48
     split_max_shares: int = 20
     rate_limit_share_pay_per_window: int = 20
+
+    @field_validator("database_url")
+    @classmethod
+    def _sqlalchemy_url(cls, v: str) -> str:
+        """Hosts hand out postgres:// or postgresql:// URLs; we use the psycopg 3 driver."""
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
+    def production_problems(self) -> list[str]:
+        """Things that must NOT be true on a public server. Empty list = fine."""
+        problems = []
+        if len(self.jwt_secret) < 32 or self.jwt_secret.startswith("dev-") or "change-me" in self.jwt_secret:
+            problems.append("JWT_SECRET is a development value (anyone could forge logins). Set a long random one.")
+        if "change-me" in self.payment_webhook_secret or self.payment_webhook_secret.startswith("dev-"):
+            problems.append("PAYMENT_WEBHOOK_SECRET is a development value. Set a long random one.")
+        if self.otp_dev_mode:
+            problems.append("OTP_DEV_MODE is on: sign-in codes would be shown on screen to anyone. Set OTP_DEV_MODE=false.")
+        if self.cors_origin_regex and "localhost" in self.cors_origin_regex:
+            problems.append("CORS_ORIGIN_REGEX still allows localhost and home networks. Set CORS_ORIGIN_REGEX= (empty) and list your website in CORS_ORIGINS.")
+        return problems
 
 
 settings = Settings()

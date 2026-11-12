@@ -40,6 +40,7 @@ from app.models import Booking, PushSubscription, ReminderSent, Showtime
 
 log = logging.getLogger(__name__)
 KEY_FILE = Path(__file__).resolve().parents[2] / ".vapid_keys.json"
+_memory_keys: dict | None = None
 
 
 class SubscriptionGone(Exception):
@@ -64,11 +65,17 @@ def get_keys() -> dict:
         return {"private": settings.vapid_private_key, "public": settings.vapid_public_key}
     if KEY_FILE.exists():
         return json.loads(KEY_FILE.read_text())
-    keys = generate_keys()
-    KEY_FILE.write_text(json.dumps(keys))
-    os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # private key: owner only
-    log.info("Generated new VAPID keys in %s", KEY_FILE)
-    return keys
+    global _memory_keys
+    if _memory_keys is None:
+        _memory_keys = generate_keys()
+        try:
+            KEY_FILE.write_text(json.dumps(_memory_keys))
+            os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # private key: owner only
+            log.info("Generated new VAPID keys in %s", KEY_FILE)
+        except OSError:
+            log.warning("Generated TEMPORARY VAPID keys (cannot write %s). Notification subscriptions will stop "
+                        "working after a restart: set VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY.", KEY_FILE)
+    return _memory_keys
 
 
 def _real_send(sub: PushSubscription, payload: dict) -> None:
