@@ -20,10 +20,9 @@ These are the parts that go beyond a basic booking site.
 8. **Real notifications before your movie.** Turn on reminders once and you get a system notification (like any app) 15 minutes before a show you paid for: "Have you reached the theatre?", with Directions and "I'm here" buttons. It works even when the website is closed.
 9. **Directions to the theatre.** One tap opens Google Maps with the route from where you are, and a small map shows on your confirmed booking. No API key needed.
 10. **Stay signed in.** Sign in once and you stay signed in for 30 days. Every time you open the site the 30 days start again.
-
-8. **A real 3D hall.** Tap "View in 3D" to see the hall from your seat's real position and height (drag to look around), or switch to the whole-hall overview and tap any seat to sit there. Built from our own seat layout.
-9. **A seat finder.** On a movie page, find the best free seats together in every upcoming show: centre seats only, not too close, a price cap, and morning, afternoon, evening or night.
-10. **Always-current listings.** 10 cities with several theatres each, "Now showing" and "Coming soon" rows, and a rolling schedule that keeps the next few days stocked with showtimes.
+11. **A real 3D hall.** Tap "View in 3D" to see the hall from your seat's real position and height (drag to look around), or switch to the whole-hall overview and tap any seat to sit there. Built from our own seat layout.
+12. **A seat finder.** On a movie page, find the best free seats together in every upcoming show: centre seats only, not too close, a price cap, and morning, afternoon, evening or night.
+13. **Always-current listings.** 10 cities with several theatres each, "Now showing" and "Coming soon" rows, and a rolling schedule that keeps the next few days stocked with showtimes.
 
 Also included: city picker, movie posters, Telugu movies, email or phone-code sign in, a small admin area, and a white page with a soft moving background.
 
@@ -64,6 +63,16 @@ python scripts/seed_demo.py
 python scripts/seed_telugu.py
 ```
 
+Then give every city several theatres and stock the next few days with showtimes (this talks to the database directly, so the backend doesn't need to be running):
+```
+python scripts/seed_cities.py
+```
+Showtimes are generated, so they run out. Keep them coming with either of these:
+```
+python scripts/schedule_showtimes.py          # run it once a day (adds only what is missing)
+```
+or set `AUTO_SCHEDULE_DAYS=4` in `.env` and the server's background loop does it every hour.
+
 **A current movie list (optional).** To pull "now playing in India" and "coming soon" from TMDB (the official free movie database; needs a free key, and some networks block it, so step 1 can run on another device):
 ```
 TMDB_API_KEY=your-key python scripts/sync_catalog.py fetch catalog.json     # where TMDB opens
@@ -71,12 +80,12 @@ python scripts/sync_catalog.py apply catalog.json                           # wh
 ```
 It adds new movies, fills in release dates, real runtimes, genres and ratings, and a future release date puts a movie under "Coming soon". It supplies the movie list only. Showtimes stay generated.
 
-**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones with IMDb data, get a free key at omdbapi.com/apikey.aspx (click the activation link in the email, the key doesn't work before that), then run:
+**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones, make a free account at themoviedb.org, create an API key (Settings > API), put it in your `.env` file as `TMDB_API_KEY=your-key`, and run:
 ```
-OMDB_API_KEY=your-key python scripts/fetch_posters.py all --source omdb --language Telugu
+python scripts/fetch_posters.py all --language Telugu
 ```
 `--language Telugu` keeps it to the real Telugu releases. The made-up demo movies (Midnight Express and so on) share names with real films, so leave them alone.
-It also fills in the IMDb rating, runtime and genre. It only uses a poster when the match is certain, and lists the ones it was unsure about, so you can set those by hand in the Admin page. Small regional films are often missing from OMDb. The posters are linked from IMDb's image server, which is fine for a personal demo project but is not licensed for a commercial product. (TMDB works too: `--source tmdb`, but some networks block it.)
+It also fills in the real runtime, genre and rating. It only uses a poster when the match is certain (same title, right language, a 2026 release), and lists the ones it was unsure about, so you can set those by hand in the Admin page. Small regional films are often missing from TMDB. If your network blocks TMDB, the docs at the top of `scripts/fetch_posters.py` show how to do the lookup step on another device. The posters are linked from TMDB's image server, and the website footer carries the credit TMDB asks for.
 
 **6. Start the website** (another new terminal)
 ```
@@ -191,7 +200,8 @@ The second test mostly shows one laptop running out of power. To run it yourself
 - **Notifications on a phone need https.** Browsers only allow them on `https://` addresses (and `localhost`, which is only your own computer). So they work on this laptop now, but a phone can only get them after the site is put online with https. On an iPhone you must also "Add to Home Screen" first. If notifications are not turned on, a small popup appears instead while the site is open.
 - **This is not SMS.** Texting a phone number needs a paid SMS service.
 - **Directions** find the theatre by its name and city using Google Maps. A very new or oddly named theatre may need its name fixed.
-- **The "view from seat" picture** is an illustration, not a real photo of the cinema.
+- **The "view from seat" picture and the 3D hall** are built from the hall's layout, not a real photo or scan of the cinema. The distances are assumptions.
+- **Showtimes and theatres are generated.** Real listings from real cinemas need an agreement with the cinemas or a data company. Theatre names are made up.
 - **Visitors who aren't signed in** are not rate limited on public pages, because there is no account to count.
 - **The Docker files** for running everything together were written but never tried.
 - The website has been tested by code, but not carefully clicked through by a person.
@@ -216,4 +226,5 @@ Fixed already: logging out really ends the session (a stolen copy of the login s
 | Seat holds fail | Redis is not running. |
 | Can't connect to database | PostgreSQL is not running. |
 | TMDB site or poster script "can't be reached" | Some internet providers block TMDB. Change your DNS to 1.1.1.1 (Settings > Network > your Wi-Fi > IPv4 > DNS) or turn on Secure DNS in Chrome, or use a phone hotspot. |
-| Chat says "not configured" | Add `ANTHROPIC_API_KEY` as described above. |
+| Chat says "not configured" | Add `GEMINI_API_KEY` (or `ANTHROPIC_API_KEY`) to `.env` as described above and restart the backend. |
+| No movie or showtime is listed | Showtimes run out. Run `python scripts/schedule_showtimes.py`. |
