@@ -51,6 +51,24 @@ def _env(name: str) -> str:
     return ""
 
 
+
+def _fetch_json(request, tries: int = 8):
+    """GET a URL and parse the JSON. On a flaky network some connections are reset before they start,
+    so a failed connection (or a 429/5xx reply) is retried a few times with a short pause."""
+    last = None
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 500, 502, 503, 504):
+                raise
+            last = exc
+        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as exc:
+            last = exc
+        time.sleep(min(0.4 * (attempt + 1), 3))
+    raise SystemExit(f"Could not reach the service after {tries} tries ({last}). Check your network and try again.")
+
 def _prefer_ipv4() -> None:
     """Try IPv4 addresses first. On some networks IPv6 is advertised but does not work, which makes
     every request wait for a timeout before falling back."""
@@ -106,8 +124,7 @@ def entry_from(resp, movie):
 def _get(key, params):
     url = API + "?" + urllib.parse.urlencode({"apikey": key, "type": "movie", **params})
     try:
-        with urllib.request.urlopen(url, timeout=20) as r:
-            return json.load(r)
+        return _fetch_json(urllib.request.Request(url))
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             sys.exit("OMDb rejected the key (401). Check OMDB_API_KEY, and make sure you clicked the activation link in the email.")
