@@ -25,6 +25,7 @@ from app.deps import get_current_user_optional, require_admin
 from app.models import BookingSeat, Movie, Screen, Showtime, ShowtimeSeat, Theatre, User
 from app.redis_client import get_redis
 from app.schemas import SeatOut, ShowtimeCreate, ShowtimeOut
+from app.services import schedule_service
 from app.services.booking_service import ACTIVE_STATUSES
 
 router = APIRouter(prefix="/showtimes", tags=["showtimes"])
@@ -40,39 +41,12 @@ def create_showtime(
     if screen is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Screen not found")
 
-    # Validate prices cover every seat type in the layout BEFORE creating
-    # anything, so a bad request never leaves a half-built showtime behind.
-    seat_types_in_layout = {
-        seat_type
-        for row in screen.layout
-        for seat_type in row["seats"]
-        if seat_type is not None
-    }
-    missing = seat_types_in_layout - body.prices.keys()
-    if missing:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"Missing a price for seat type(s): {sorted(missing)}"
+    try:
+        showtime = schedule_service.create_showtime_with_seats(
+            db, body.movie_id, screen, body.starts_at, body.prices
         )
-
-    showtime = Showtime(
-        movie_id=body.movie_id, screen_id=body.screen_id, starts_at=body.starts_at, prices=body.prices
-    )
-    db.add(showtime)
-    db.flush()  # gives showtime.id without committing yet
-
-    db.add_all(
-        ShowtimeSeat(
-            showtime_id=showtime.id,
-            row_label=row["row"],
-            seat_number=col,
-            seat_type=seat_type,
-            price=body.prices[seat_type],
-        )
-        for row in screen.layout
-        for col, seat_type in enumerate(row["seats"], start=1)
-        if seat_type is not None  # None = aisle gap, no seat there
-    )
-    db.commit()
+    except ValueError as exc:  # prices must cover every seat type; nothing was created
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return showtime
 
 

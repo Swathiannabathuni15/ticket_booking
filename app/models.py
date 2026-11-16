@@ -22,10 +22,10 @@ BOOKING AND THE DOUBLE-BOOKING GUARD
     the price of getting the real backstop (Layer 2: a DB constraint that
     holds even if the app logic above it has a bug) on a child table.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    JSON, Boolean, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint, text,
+    JSON, Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -59,7 +59,13 @@ class Movie(Base):
     genre: Mapped[str] = mapped_column(String(100), default="", server_default="")
     language: Mapped[str] = mapped_column(String(50), default="English", server_default="English")
     rating: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    # Not set = already showing. A date in the future = "coming soon" (not bookable yet).
+    release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    @property
+    def status(self) -> str:
+        return "coming_soon" if self.release_date and self.release_date > date.today() else "now_showing"
 
 
 class Theatre(Base):

@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     reminder_minutes: int = 15
     # "Morning / evening" in the seat finder means the clock where the cinemas are.
     display_timezone: str = "Asia/Kolkata"
+    # > 0: the server's background loop keeps showtimes created this many days ahead (0 = off;
+    # you can also run scripts/schedule_showtimes.py yourself, e.g. once a day).
+    auto_schedule_days: int = 0
 
     # Split-the-bill share links
     split_link_ttl_hours: int = 48

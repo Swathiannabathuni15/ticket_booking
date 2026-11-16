@@ -223,7 +223,8 @@ def run_tool(db: Session, r: redis.Redis, user: User, name: str, args: dict) -> 
             if city:
                 stmt = stmt.where(Movie.id.in_(
                     select(Showtime.movie_id).join(Screen, Screen.id == Showtime.screen_id)
-                    .join(Theatre, Theatre.id == Screen.theatre_id).where(func.lower(Theatre.city) == city)))
+                    .join(Theatre, Theatre.id == Screen.theatre_id)
+                    .where(func.lower(Theatre.city) == city, Showtime.starts_at > datetime.now(timezone.utc))))
             found = [m for m in db.scalars(stmt).all() if q in f"{m.title} {m.genre} {m.language}".lower()]
             return _wrap([{"id": m.id, "title": m.title, "language": m.language, "genre": m.genre,
                            "rating": float(m.rating) if m.rating is not None else None} for m in found[:40]])

@@ -58,7 +58,7 @@ def test_a_code_can_never_open_an_admin_account(client):
 def test_background_round_runs_the_jobs_and_only_one_process_wins_the_lock():
     r = _test_redis()
     first = inprocess.tick(r)
-    assert set(first) == {"reconciled", "expired", "reminders"} and "skipped" not in first
+    assert set(first) == {"reconciled", "expired", "reminders", "scheduled"} and "skipped" not in first
     assert inprocess.tick(r) == {"skipped": True}                  # a second server in the same moment does nothing
     r.delete(inprocess.LOCK_KEY)
     assert "skipped" not in inprocess.tick(r)

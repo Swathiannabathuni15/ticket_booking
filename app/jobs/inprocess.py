@@ -17,6 +17,7 @@ from app.db import SessionLocal
 from app.redis_client import get_redis
 from app.services.payment_service import expire_unpaid_bookings, reconcile_pending_attempts
 from app.services.push_service import send_due_reminders
+from app.services.schedule_service import extend_schedule_if_due
 
 log = logging.getLogger("jobs.inprocess")
 LOCK_KEY = "bgjobs:lock"
@@ -34,7 +35,7 @@ def tick(r: redis.Redis | None = None) -> dict:
     out = {}
     with SessionLocal() as db:
         for name, fn in (("reconciled", reconcile_pending_attempts), ("expired", expire_unpaid_bookings),
-                         ("reminders", send_due_reminders)):
+                         ("reminders", send_due_reminders), ("scheduled", lambda d: extend_schedule_if_due(d, r))):
             try:
                 out[name] = fn(db)
             except Exception:             # one failing job must not stop the others

@@ -385,3 +385,7 @@ body:has(.paybar) .seatview-float { bottom: 120px; }
 .finder-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; align-items: end; margin: 8px 0; }
 .finder-results { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .finder-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+
+.mcard-soon { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px 10px 6px; background: linear-gradient(transparent, rgba(60,30,120,.92)); color: #fff; font-weight: 700; font-size: .85rem; }
+.soon-note { border-left: 4px solid #7c4dff; }
+.soon-note p { margin: 4px 0 0; }

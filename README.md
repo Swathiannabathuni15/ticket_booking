@@ -21,6 +21,10 @@ These are the parts that go beyond a basic booking site.
 9. **Directions to the theatre.** One tap opens Google Maps with the route from where you are, and a small map shows on your confirmed booking. No API key needed.
 10. **Stay signed in.** Sign in once and you stay signed in for 30 days. Every time you open the site the 30 days start again.
 
+8. **A real 3D hall.** Tap "View in 3D" to see the hall from your seat's real position and height (drag to look around), or switch to the whole-hall overview and tap any seat to sit there. Built from our own seat layout.
+9. **A seat finder.** On a movie page, find the best free seats together in every upcoming show: centre seats only, not too close, a price cap, and morning, afternoon, evening or night.
+10. **Always-current listings.** 10 cities with several theatres each, "Now showing" and "Coming soon" rows, and a rolling schedule that keeps the next few days stocked with showtimes.
+
 Also included: city picker, movie posters, Telugu movies, email or phone-code sign in, a small admin area, and a white page with a soft moving background.
 
 ## How to run it
@@ -59,6 +63,13 @@ source .venv/bin/activate
 python scripts/seed_demo.py
 python scripts/seed_telugu.py
 ```
+
+**A current movie list (optional).** To pull "now playing in India" and "coming soon" from TMDB (the official free movie database; needs a free key, and some networks block it, so step 1 can run on another device):
+```
+TMDB_API_KEY=your-key python scripts/sync_catalog.py fetch catalog.json     # where TMDB opens
+python scripts/sync_catalog.py apply catalog.json                           # where the app is
+```
+It adds new movies, fills in release dates, real runtimes, genres and ratings, and a future release date puts a movie under "Coming soon". It supplies the movie list only. Showtimes stay generated.
 
 **Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones with IMDb data, get a free key at omdbapi.com/apikey.aspx (click the activation link in the email, the key doesn't work before that), then run:
 ```

@@ -1,5 +1,5 @@
 """Request and response shapes (validated by Pydantic)."""
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -70,6 +70,7 @@ class MovieCreate(BaseModel):
     genre: str = Field(default="", max_length=100)
     language: str = Field(default="English", max_length=50)
     rating: float | None = Field(default=None, ge=0, le=10)
+    release_date: date | None = None
 
 
 class MovieUpdate(BaseModel):
@@ -80,6 +81,7 @@ class MovieUpdate(BaseModel):
     genre: str | None = Field(default=None, max_length=100)
     language: str | None = Field(default=None, max_length=50)
     rating: float | None = Field(default=None, ge=0, le=10)
+    release_date: date | None = None
 
 
 class MovieOut(BaseModel):
@@ -91,6 +93,8 @@ class MovieOut(BaseModel):
     genre: str = ""
     language: str = "English"
     rating: float | None = None
+    release_date: date | None = None
+    status: str = "now_showing"        # now_showing | coming_soon
 
 
 class TheatreCreate(BaseModel):

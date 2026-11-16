@@ -71,7 +71,7 @@ describe("poster + search helpers", () => {
     expect(wrapTitle("Cosmic Kitchen").every((l) => l.length <= 14)).toBe(true);
   });
   it("search matches title, genre and language case-insensitively", () => {
-    const m = { id: 1, title: "Iron Harbour", duration_minutes: 100, poster_url: null, genre: "Action/Crime", language: "Tamil", rating: 8 };
+    const m = { id: 1, title: "Iron Harbour", duration_minutes: 100, poster_url: null, genre: "Action/Crime", language: "Tamil", rating: 8, release_date: null, status: "now_showing" as const };
     expect(matches(m, "tamil")).toBe(true);
     expect(matches(m, "  crime ")).toBe(true);
     expect(matches(m, "romance")).toBe(false);

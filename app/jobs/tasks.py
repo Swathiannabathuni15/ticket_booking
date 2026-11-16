@@ -15,3 +15,10 @@ def send_due_reminders_job() -> int:
     from app.services.push_service import send_due_reminders
     with SessionLocal() as db:
         return send_due_reminders(db)
+
+
+def extend_schedule_job() -> int:
+    from app.redis_client import get_redis
+    from app.services.schedule_service import extend_schedule_if_due
+    with SessionLocal() as db:
+        return extend_schedule_if_due(db, get_redis())

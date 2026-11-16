@@ -119,6 +119,7 @@ export type User = { id: number; email: string | null; phone: string | null; is_
 export type Movie = {
   id: number; title: string; duration_minutes: number;
   poster_url: string | null; genre: string; language: string; rating: number | null;
+  release_date: string | null; status: "now_showing" | "coming_soon";
 };
 export type Theatre = { id: number; name: string; city: string };
 export type Screen = { id: number; theatre_id: number; name: string; layout: unknown[] };
@@ -173,8 +174,9 @@ export const api = {
   otpVerify: (target: OtpTarget, code: string) =>
     request<{ access_token: string }>("POST", "/auth/otp/verify", { body: { ...target, code }, auth: false }),
   cities: () => request<string[]>("GET", "/cities", { auth: false }),
-  movies: (city?: string | null) =>
-    request<Movie[]>("GET", `/movies?limit=100${city ? `&city=${encodeURIComponent(city)}` : ""}`, { auth: false }),
+  movies: (city?: string | null, status?: "now_showing" | "coming_soon") =>
+    request<Movie[]>("GET", `/movies?limit=100${city ? `&city=${encodeURIComponent(city)}` : ""}${status ? `&status=${status}` : ""}`, { auth: false }),
+  movie: (id: number) => request<Movie>("GET", `/movies/${id}`, { auth: false }),
   showtimes: (opts: { movieId?: number; city?: string | null } = {}) =>
     request<Showtime[]>(
       "GET",
