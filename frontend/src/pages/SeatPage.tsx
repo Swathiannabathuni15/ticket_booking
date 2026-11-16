@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, CUR, uuid, when, type Seat, type Showtime } from "../api";
 import { useAuth } from "../auth";
 import SeatMap, { adjacentRun } from "../components/SeatMap";
 import SeatView from "../components/SeatView";
+
+// The 3D hall is a big library: it is only downloaded when someone opens it.
+const Hall3D = lazy(() => import("../components/Hall3D"));
 import { ErrorBanner, Loading, Notice } from "../components/ui";
 import { errText, mmss, useCountdown } from "../hooks";
 
@@ -44,6 +47,7 @@ export default function SeatPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ seat: Seat; sticky: boolean } | null>(null);
+  const [hall3d, setHall3d] = useState<Seat | null>(null);
   const bookKey = useRef(uuid()); // same key on a double click => one booking
   const left = useCountdown(deadline);
 
@@ -165,7 +169,8 @@ export default function SeatPage() {
       {preview && (
         <div className="seatview-float">
           <SeatView seats={seats} seat={preview.seat} title={showtime?.movie_title ?? ""}
-            onClose={preview.sticky ? () => setPreview(null) : undefined} />
+            onClose={preview.sticky ? () => setPreview(null) : undefined}
+            onOpen3D={() => { setHall3d(preview.seat); setPreview(null); }} />
         </div>
       )}
 
@@ -175,11 +180,18 @@ export default function SeatPage() {
             <strong>{all.length}</strong> seat{all.length > 1 ? "s" : ""}: {all.map((s) => s.label).join(", ")}
             {mine.length > 0 && left !== null && <span className={`countdown inline ${left < 60 ? "urgent" : ""}`}> - held for {mmss(left)}</span>}
           </div>
-          <button className="big" onClick={() => setPreview({ seat: all[0], sticky: true })}>View from seat</button>
+          <button className="big" onClick={() => setHall3d(all[0])}>View in 3D</button>
           <button className="primary big" disabled={busy} onClick={proceed}>
             {busy ? "Please wait..." : `Pay ${CUR}${total.toFixed(2)}`}
           </button>
         </div>
+      )}
+
+      {hall3d && (
+        <Suspense fallback={<div className="hall3d"><p className="center" style={{ margin: "auto" }}>Loading the 3D hall...</p></div>}>
+          <Hall3D seats={seats} seat={hall3d} title={showtime?.movie_title ?? ""}
+            selectedIds={new Set(all.map((x) => x.id))} onClose={() => setHall3d(null)} />
+        </Suspense>
       )}
 
       {qty === null && (

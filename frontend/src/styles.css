@@ -366,3 +366,16 @@ body:has(.paybar) .seatview-float { bottom: 120px; }
   :root { --seat: 24px; }
   .seat-row { gap: 3px; }
 }
+
+/* ---- 3D hall ---- */
+.hall3d { position: fixed; inset: 0; z-index: 30; background: #07080f; color: #e8ecff; display: flex; flex-direction: column; }
+.hall3d-canvas { position: absolute; inset: 0; }
+.hall3d-canvas canvas { display: block; width: 100%; height: 100%; }
+.hall3d-top, .hall3d-bottom { position: relative; z-index: 1; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 14px; background: linear-gradient(rgba(7,8,15,.85), rgba(7,8,15,0)); pointer-events: none; }
+.hall3d-top > *, .hall3d-bottom > * { pointer-events: auto; }
+.hall3d-top button { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); }
+.hall3d-top button.primary { background: var(--primary); border-color: var(--primary); }
+.hall3d-modes { display: flex; gap: 8px; }
+.hall3d-bottom { margin-top: auto; flex-direction: column; align-items: flex-start; background: linear-gradient(rgba(7,8,15,0), rgba(7,8,15,.88)); padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+.hall3d-fallback { margin: auto; width: min(520px, 94vw); }
+@media (max-width: 700px) { .hall3d-top { padding-top: calc(10px + env(safe-area-inset-top)); } }
