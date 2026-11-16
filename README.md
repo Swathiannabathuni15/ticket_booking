@@ -185,6 +185,17 @@ The second test mostly shows one laptop running out of power. To run it yourself
 - **The Docker files** for running everything together were written but never tried.
 - The website has been tested by code, but not carefully clicked through by a person.
 
+## Known limits I plan to fix later
+
+These are real, and I know about them. None of them lets a seat be sold twice.
+
+- **Locking someone out.** Sign-in is limited per email, so someone can type wrong passwords for your email and block your sign-in for a minute. The usual fix is a captcha.
+- **The 8-seat hold limit has a small gap.** Two requests at the same instant could briefly hold more than 8 seats (the booking itself is still capped at 8).
+- **Rate-limit counters reset every minute,** so a short double burst is possible across the boundary.
+- **Booking status is copied onto each seat row** so the database can enforce "one active booking per seat". Any new code that changes a booking's status must update that copy too.
+
+Fixed already: logging out really ends the session (a stolen copy of the login stops working), a session can be renewed for at most 90 days, the test-card menu is off when `GATEWAY_ALLOW_TEST_METHODS=false`, and the seed scripts refuse the public demo admin password on a real server.
+
 ## Problems?
 
 | Problem | Try this |

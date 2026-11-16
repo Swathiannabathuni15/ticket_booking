@@ -15,11 +15,15 @@ import httpx
 
 BASE = "http://localhost:8000"
 EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
-PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
+PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"   # set ADMIN_PASSWORD for any public server
 MINUTES = int(sys.argv[1]) if len(sys.argv) > 1 else 12
 
 
+from _safety import require_real_admin_password  # noqa: E402
+
+
 def main():
+    require_real_admin_password(BASE, PASSWORD)
     c = httpx.Client(base_url=BASE, timeout=30)
     try:
         c.get("/health")

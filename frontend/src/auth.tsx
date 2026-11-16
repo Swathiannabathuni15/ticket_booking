@@ -63,7 +63,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await finish((await api.otpVerify(target, code)).access_token);
   }, [finish]);
 
-  const logout = useCallback(() => { tokenStore.clear(); setUser(null); }, []);
+  const logout = useCallback(() => {
+    // Tell the server first, so a copy of the token stops working too; never let a failure block signing out.
+    api.logout().catch(() => {}).finally(() => { tokenStore.clear(); setUser(null); });
+    setUser(null);
+  }, []);
   const openSignIn = useCallback((after?: string) => setModal({ after }), []);
 
   return (

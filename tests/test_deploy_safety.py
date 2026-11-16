@@ -8,7 +8,7 @@ from tests.conftest import _test_redis, admin_headers
 
 def _prod(**over):
     base = dict(environment="production", jwt_secret="x" * 48, payment_webhook_secret="y" * 48,
-                otp_dev_mode=False, cors_origin_regex="")
+                otp_dev_mode=False, cors_origin_regex="", gateway_allow_test_methods=False)
     return Settings(_env_file=None, **{**base, **over})
 
 
@@ -21,6 +21,7 @@ def test_a_correct_production_config_has_no_problems():
     ({"jwt_secret": "short"}, "JWT_SECRET"),
     ({"payment_webhook_secret": "dev-webhook-secret-change-me-0123456789"}, "PAYMENT_WEBHOOK_SECRET"),
     ({"otp_dev_mode": True}, "OTP_DEV_MODE"),
+    ({"gateway_allow_test_methods": True}, "GATEWAY_ALLOW_TEST_METHODS"),
     ({"cors_origin_regex": r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"}, "CORS_ORIGIN_REGEX"),
 ])
 def test_each_insecure_production_setting_is_reported(over, needle):

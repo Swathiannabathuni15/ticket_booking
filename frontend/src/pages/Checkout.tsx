@@ -31,6 +31,8 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [method, setMethod] = useState<PayMethod>("tok_ok");
+  const [testCards, setTestCards] = useState(false);   // the demo card menu only exists when the server allows it
+  useEffect(() => { api.config().then((c) => setTestCards(c.test_cards)).catch(() => setTestCards(false)); }, []);
   const due = booking?.payment_due_at ? new Date(booking.payment_due_at).getTime() : null;
   const processing = booking?.status === "pending_payment" && booking.payment_status === "processing";
   const left = useCountdown(booking?.status === "pending_payment" && !processing ? due : null);
@@ -52,7 +54,7 @@ export default function CheckoutPage() {
   async function pay() {
     setBusy(true); setError(null);
     try {
-      update(await api.pay(id, attemptKey(id), method));   // 201 paid, 200 replay, 202 processing
+      update(await api.pay(id, attemptKey(id), testCards ? method : "tok_ok"));   // 201 paid, 200 replay, 202 processing
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) {
         forgetKey(id);                                     // a clean decline: the next try is a NEW attempt
@@ -101,13 +103,13 @@ export default function CheckoutPage() {
           <div className={`countdown ${left !== null && left < 60 ? "urgent" : ""}`}>
             Pay within {left !== null ? mmss(left) : "..."} or the seats are released
           </div>
-          <label>Demo card (no real money)
+          {testCards && <label>Demo card (no real money)
             <select value={method} onChange={(e) => setMethod(e.target.value as PayMethod)}>
               <option value="tok_ok">Card works - payment succeeds</option>
               <option value="tok_decline">Card declined</option>
               <option value="tok_timeout">Bank charges, but the reply is lost (webhook confirms)</option>
             </select>
-          </label>
+          </label>}
           <div className="actions">
             <button className="primary big" disabled={busy} onClick={pay}>{busy ? "Processing..." : `Pay ${money(booking.total_cents)}`}</button>
             <button disabled={busy} onClick={cancel}>Cancel booking</button>

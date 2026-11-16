@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Stay signed in: 30 days, renewed every time the site is opened (POST /auth/refresh),
     # so people who use the site are not asked to sign in again.
     jwt_expire_minutes: int = 60 * 24 * 30
+    # A session can be renewed again and again, but never beyond this many days from the original sign-in.
+    max_session_days: int = 90
     db_pool_size: int = 20
     # How long a request waits for a free DB connection before we shed it as a 503.
     db_pool_timeout_seconds: int = 5
@@ -120,6 +122,9 @@ class Settings(BaseSettings):
             problems.append("JWT_SECRET is a development value (anyone could forge logins). Set a long random one.")
         if "change-me" in self.payment_webhook_secret or self.payment_webhook_secret.startswith("dev-"):
             problems.append("PAYMENT_WEBHOOK_SECRET is a development value. Set a long random one.")
+        if self.gateway_allow_test_methods:
+            problems.append("GATEWAY_ALLOW_TEST_METHODS is on: the browser chooses which test 'card' works. "
+                            "Set GATEWAY_ALLOW_TEST_METHODS=false (required before connecting a real bank).")
         if self.otp_dev_mode:
             problems.append("OTP_DEV_MODE is on: sign-in codes would be shown on screen to anyone. Set OTP_DEV_MODE=false.")
         if self.cors_origin_regex and "localhost" in self.cors_origin_regex:

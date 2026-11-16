@@ -1,8 +1,10 @@
 import logging
 import secrets
+import time
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,8 +18,9 @@ from app.rate_limit_deps import (
 from app.config import settings
 from app.redis_client import get_redis
 from app.schemas import Credentials, OtpRequest, OtpRequestOut, OtpVerify, TokenOut, UserOut
-from app.services import otp_delivery, rate_limit
-from app.security import create_access_token, hash_password, verify_password
+from app.services import otp_delivery, rate_limit, session_service
+from app.deps import bearer
+from app.security import create_access_token, decode_token, hash_password, verify_password
 
 router = APIRouter(tags=["auth"])
 
@@ -52,11 +55,28 @@ def login(body: Credentials, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/refresh", response_model=TokenOut)
-def refresh(user: User = Depends(get_current_user)):
-    """Swap a still-valid token for a fresh one (a sliding session): anyone who
-    keeps using the site stays signed in; a token that already expired cannot be
-    refreshed, so a stolen old token does not live forever."""
-    return TokenOut(access_token=create_access_token(user.id))
+def refresh(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    user: User = Depends(get_current_user),
+):
+    """Swap a still-valid token for a fresh one (a sliding session): anyone who keeps using
+    the site stays signed in. But never past `max_session_days` from the ORIGINAL sign-in,
+    and a token that already expired or was logged out cannot be refreshed, so a stolen
+    token does not live forever."""
+    claims = decode_token(creds.credentials) or {}
+    started = int(claims.get("sst", time.time()))
+    if time.time() - started > settings.max_session_days * 86400:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This session is too old. Please sign in again.")
+    return TokenOut(access_token=create_access_token(user.id, session_start=started))
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(creds: HTTPAuthorizationCredentials | None = Depends(bearer), r: redis.Redis = Depends(get_redis)):
+    """End THIS login for real: the token stops working everywhere, not just in this browser.
+    Always succeeds (a missing or already-dead token is fine), so signing out never gets stuck."""
+    claims = decode_token(creds.credentials) if creds else None
+    if claims:
+        session_service.revoke(r, claims)
 
 
 @router.get("/me", response_model=UserOut)

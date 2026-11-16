@@ -156,6 +156,8 @@ export const api = {
   login: (email: string, password: string) =>
     request<{ access_token: string }>("POST", "/auth/login", { body: { email, password }, auth: false }),
   me: () => request<User>("GET", "/me"),
+  logout: () => request<void>("POST", "/auth/logout"),
+  config: () => request<{ test_cards: boolean }>("GET", "/config", { auth: false }),
   refresh: () => request<{ access_token: string }>("POST", "/auth/refresh"),
   otpRequest: (target: OtpTarget) =>
     request<OtpSent>("POST", "/auth/otp/request", { body: target, auth: false }),

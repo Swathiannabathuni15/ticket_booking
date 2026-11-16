@@ -23,7 +23,7 @@ sys.path.insert(0, ".")
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
-PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
+PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"   # set ADMIN_PASSWORD for any public server
 
 # (title, genre-if-seen)
 MOVIES = [
@@ -58,7 +58,11 @@ def patient(client: httpx.Client) -> httpx.Client:
     return client
 
 
+from _safety import require_real_admin_password  # noqa: E402
+
+
 def main():
+    require_real_admin_password(BASE, PASSWORD)
     c = patient(httpx.Client(base_url=BASE, timeout=60))
     try:
         c.get("/health")

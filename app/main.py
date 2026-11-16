@@ -58,6 +58,13 @@ def _db_pool_exhausted(_req: Request, _exc: PoolTimeout):
     )
 
 
+@app.get("/config", tags=["meta"])
+def public_config():
+    """Settings the website needs to know. test_cards = the checkout may offer the demo
+    "card" menu; when false the server ignores whichever card the browser asks for."""
+    return {"test_cards": settings.gateway_allow_test_methods}
+
+
 @app.get("/health", tags=["meta"])
 def health():
     return {"status": "ok"}

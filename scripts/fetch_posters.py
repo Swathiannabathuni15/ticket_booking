@@ -32,7 +32,7 @@ import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
-PASSWORD = os.environ.get("ADMIN_PASSWORD", "demo-password-1")   # set ADMIN_PASSWORD for any public server
+PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"   # set ADMIN_PASSWORD for any public server
 ALLOWED_FIELDS = ("poster_url", "duration_minutes", "genre", "rating")
 # A poster link in a result file may only point at these image servers.
 ALLOWED_POSTER_HOSTS = ("https://image.tmdb.org/", "https://m.media-amazon.com/")
@@ -71,6 +71,7 @@ def apply_posters(api, headers: dict, entries: list[dict]) -> int:
 
 
 def connect(base: str):
+    require_real_admin_password(base, PASSWORD)
     api = httpx.Client(base_url=base, timeout=30)
     try:
         api.get("/health")
@@ -80,6 +81,9 @@ def connect(base: str):
     if not token:
         sys.exit("Admin login failed - run scripts/seed_demo.py first.")
     return api, {"Authorization": f"Bearer {token}"}
+
+
+from _safety import require_real_admin_password  # noqa: E402
 
 
 def main():
