@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.gateway_middleware import PerUserRateLimit
 
-from app.routers import admin, agent, auth, bookings, catalog, holds, payments, push, showtimes, splits
+from app.routers import admin, agent, auth, bookings, catalog, finder, holds, payments, push, showtimes, splits
 
 
 @asynccontextmanager
@@ -42,6 +42,7 @@ app.include_router(agent.router)
 app.include_router(auth.router)
 app.include_router(catalog.router)
 app.include_router(showtimes.router)
+app.include_router(finder.router)
 app.include_router(bookings.router)
 app.include_router(holds.router)
 app.include_router(payments.router)

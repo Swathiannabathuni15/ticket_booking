@@ -13,6 +13,8 @@ lives in Postgres (Layer 1/2, see booking_service) and in the fail-closed
 503 that /holds and /bookings return when Redis is down. Losing the "held"
 distinction here for a moment is a cosmetic downgrade, not a safety one.
 """
+from typing import NamedTuple
+
 from fastapi import APIRouter, Depends, HTTPException, status
 import redis
 from sqlalchemy import and_, func, select
@@ -179,23 +181,43 @@ def _split_label(label: str) -> tuple[str, int]:
     return label[:i], int(label[i:])
 
 
-def pick_best_seats(seats: list[SeatOut], count: int, seat_type: str | None = None) -> list[SeatOut]:
-    """`count` ADJACENT available seats in one row (an aisle gap or any
-    unavailable seat breaks adjacency), as close as possible to the best spot:
-    about 60% of the way back, centred left-right. [] if no such run exists."""
+class Block(NamedTuple):
+    """A group of adjacent seats and how good a spot it is (lower score = better)."""
+    seats: list
+    score: float
+    rows_from_screen: int
+    off_centre: float        # how many seats left or right of the middle of the row
+
+
+def best_block(
+    seats: list[SeatOut], count: int, seat_type: str | None = None, *,
+    centre_only: bool = False, min_rows_from_screen: int = 0, max_price: float | None = None,
+) -> Block | None:
+    """`count` ADJACENT available seats in one row (an aisle gap or any unavailable seat
+    breaks adjacency), as close as possible to the best spot: about 60% of the way back,
+    centred left-right. Optional filters:
+      centre_only          only seats in the middle 40% of the row
+      min_rows_from_screen skip the rows closest to the screen ("not too close")
+      max_price            every seat in the block must cost at most this
+    None if no such group exists."""
     rows: dict[str, list[tuple[int, SeatOut]]] = {}
     for s in seats:
         row, num = _split_label(s.label)
         rows.setdefault(row, []).append((num, s))
     order = sorted(rows)
     ideal = 0.6 * (len(order) - 1)
-    best, best_score = [], None
+    best: Block | None = None
     for idx, row in enumerate(order):
+        rows_from_screen = len(order) - 1 - idx
+        if rows_from_screen < min_rows_from_screen:
+            continue
         line = sorted(rows[row], key=lambda t: t[0])
         centre = (line[0][0] + line[-1][0]) / 2
+        band = 0.2 * (line[-1][0] - line[0][0] + 1)          # the middle 40% of the row
         run: list[tuple[int, SeatOut]] = []
         for num, s in line + [(-10, None)]:  # sentinel flushes the last run
-            ok = s is not None and s.status == "available" and (seat_type is None or s.seat_type == seat_type)
+            ok = (s is not None and s.status == "available" and (seat_type is None or s.seat_type == seat_type)
+                  and (max_price is None or s.price <= max_price))
             if ok and run and num == run[-1][0] + 1:
                 run.append((num, s))
             else:
@@ -203,11 +225,19 @@ def pick_best_seats(seats: list[SeatOut], count: int, seat_type: str | None = No
                     for k in range(len(run) - count + 1):
                         win = run[k:k + count]
                         mid = (win[0][0] + win[-1][0]) / 2
+                        if centre_only and abs(mid - centre) > band:
+                            continue
                         score = abs(idx - ideal) * 2 + abs(mid - centre)
-                        if best_score is None or score < best_score:
-                            best, best_score = [w[1] for w in win], score
+                        if best is None or score < best.score:
+                            best = Block([w[1] for w in win], score, rows_from_screen, round(mid - centre, 1))
                 run = [(num, s)] if ok else []
     return best
+
+
+def pick_best_seats(seats: list[SeatOut], count: int, seat_type: str | None = None) -> list[SeatOut]:
+    """The seats of the best block, or [] (see best_block)."""
+    block = best_block(seats, count, seat_type)
+    return block.seats if block else []
 
 
 @router.get("/{showtime_id}/best-seats", response_model=list[SeatOut])

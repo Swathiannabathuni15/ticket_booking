@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, type Movie, type Showtime } from "../api";
 import { useCity } from "../city";
 import { DirectionsButton } from "../components/Directions";
+import SeatFinder from "../components/SeatFinder";
 import Poster from "../components/Poster";
 import { ErrorBanner, Loading } from "../components/ui";
 import { useLoad } from "../hooks";
@@ -134,6 +135,7 @@ export function MovieShowtimesPage() {
       <ErrorBanner message={shows.error ?? movie.error} />
       {shows.loading && !shows.data && <Loading />}
       {!shows.loading && days.length === 0 && <p className="muted">No showtimes{city ? ` in ${city}` : ""} for this movie. Try another city.</p>}
+      {days.length > 0 && <SeatFinder movieId={movieId} />}
       <div className="daystrip">
         {days.map((d) => (
           <button key={dayKey(d)} className={`day ${activeDay === dayKey(d) ? "on" : ""}`} onClick={() => setDay(dayKey(d))}>

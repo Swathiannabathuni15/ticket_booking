@@ -138,6 +138,15 @@ export type Booking = {
   payment_status: "paid" | "processing" | "failed" | "unpaid";
   created_at: string; payment_due_at: string | null; paid_at: string | null; user_id?: number;
 };
+export type BestShow = {
+  showtime_id: number; starts_at: string; movie_title: string; theatre_name: string; city: string; screen_name: string;
+  seat_ids: number[]; seat_labels: string[]; seat_type: string; total_price: number;
+  rows_from_screen: number; off_centre: number; score: number;
+};
+export type FinderFilters = {
+  count: number; city?: string | null; centre_only?: boolean; not_too_close?: boolean;
+  max_price?: number; time_of_day?: string;
+};
 export type Share = {
   id: number; name: string; amount_cents: number; is_owner: boolean;
   status: "unpaid" | "paid" | "cancelled"; paid_at: string | null; link: string | null;
@@ -172,6 +181,15 @@ export const api = {
       `/showtimes?limit=100${opts.movieId ? `&movie_id=${opts.movieId}` : ""}${opts.city ? `&city=${encodeURIComponent(opts.city)}` : ""}`,
       { auth: false },
     ),
+  bestShows: (movieId: number, f: FinderFilters) => {
+    const q = new URLSearchParams({ count: String(f.count), limit: "8" });
+    if (f.city) q.set("city", f.city);
+    if (f.centre_only) q.set("centre_only", "true");
+    if (f.not_too_close) q.set("not_too_close", "true");
+    if (f.max_price) q.set("max_price", String(f.max_price));
+    if (f.time_of_day) q.set("time_of_day", f.time_of_day);
+    return request<BestShow[]>("GET", `/movies/${movieId}/best-seats?${q}`);
+  },
   showtime: (id: number) => request<Showtime>("GET", `/showtimes/${id}`, { auth: false }),
   bestSeats: (showtimeId: number, count: number, seatType?: string) =>
     request<Seat[]>("GET", `/showtimes/${showtimeId}/best-seats?count=${count}${seatType ? `&seat_type=${seatType}` : ""}`),

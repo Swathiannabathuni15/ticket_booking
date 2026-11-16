@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     vapid_public_key: str = ""
     vapid_subject: str = "mailto:admin@example.com"
     reminder_minutes: int = 15
+    # "Morning / evening" in the seat finder means the clock where the cinemas are.
+    display_timezone: str = "Asia/Kolkata"
 
     # Split-the-bill share links
     split_link_ttl_hours: int = 48

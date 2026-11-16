@@ -379,3 +379,9 @@ body:has(.paybar) .seatview-float { bottom: 120px; }
 .hall3d-bottom { margin-top: auto; flex-direction: column; align-items: flex-start; background: linear-gradient(rgba(7,8,15,0), rgba(7,8,15,.88)); padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
 .hall3d-fallback { margin: auto; width: min(520px, 94vw); }
 @media (max-width: 700px) { .hall3d-top { padding-top: calc(10px + env(safe-area-inset-top)); } }
+
+/* ---- seat finder ---- */
+.finder h3 { margin-top: 0; }
+.finder-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; align-items: end; margin: 8px 0; }
+.finder-results { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.finder-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: #fff; }

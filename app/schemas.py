@@ -247,3 +247,20 @@ class ShareLinkView(BaseModel):
 
 class AdminBookingOut(BookingOut):
     user_id: int
+
+
+class BestShowOut(BaseModel):
+    """One show, and the best group of seats in it, for the seat finder."""
+    showtime_id: int
+    starts_at: datetime
+    movie_title: str
+    theatre_name: str
+    city: str
+    screen_name: str
+    seat_ids: list[int]
+    seat_labels: list[str]
+    seat_type: str
+    total_price: float
+    rows_from_screen: int
+    off_centre: float          # seats left (-) or right (+) of the middle
+    score: float               # lower is better

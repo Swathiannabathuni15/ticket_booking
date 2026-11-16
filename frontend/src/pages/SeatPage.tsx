@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, CUR, uuid, when, type Seat, type Showtime } from "../api";
 import { useAuth } from "../auth";
 import SeatMap, { adjacentRun } from "../components/SeatMap";
@@ -48,6 +48,8 @@ export default function SeatPage() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ seat: Seat; sticky: boolean } | null>(null);
   const [hall3d, setHall3d] = useState<Seat | null>(null);
+  const [params] = useSearchParams();
+  const suggested = useRef(params.get("seats"));   // from the seat finder, e.g. ?seats=12,13
   const bookKey = useRef(uuid()); // same key on a double click => one booking
   const left = useCountdown(deadline);
 
@@ -62,6 +64,20 @@ export default function SeatPage() {
       });
     } catch (e) { setError(errText(e)); }
   }, [showtimeId]);
+
+  // Arrived from the seat finder: choose the suggested seats once, if they are still free.
+  useEffect(() => {
+    if (!seats || !suggested.current) return;
+    const ids = suggested.current.split(",").map(Number).filter((n) => Number.isInteger(n));
+    suggested.current = null;
+    const free = ids.length > 0 && ids.every((id) => seats.find((s) => s.id === id)?.status === "available");
+    if (free) {
+      setQty(ids.length); setSelected(new Set(ids));
+      setNotice("We picked these seats for you. Change them any time.");
+    } else if (ids.length > 0) {
+      setNotice("Those seats were just taken. Pick again, or try 'Best available'.");
+    }
+  }, [seats]);
 
   // Live updates: poll while the tab is visible.
   useEffect(() => {
