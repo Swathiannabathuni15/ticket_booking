@@ -28,6 +28,32 @@ IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 LANG_CODES = {"telugu": "te", "hindi": "hi", "tamil": "ta", "english": "en", "kannada": "kn", "malayalam": "ml"}
 
 
+
+def _env(name: str) -> str:
+    """The setting from the environment, else from a .env file (current folder, this script's folder, or its parent)."""
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    here = os.path.dirname(os.path.abspath(__file__))
+    for folder in (os.getcwd(), here, os.path.dirname(here)):
+        try:
+            for line in open(os.path.join(folder, ".env")):
+                k, _, v = line.strip().partition("=")
+                if k == name and v.strip():
+                    return v.strip().strip("'\"")
+        except OSError:
+            pass
+    return ""
+
+
+def _prefer_ipv4() -> None:
+    """Try IPv4 addresses first. On some networks IPv6 is advertised but does not work, which makes
+    every request wait for a timeout before falling back."""
+    import socket
+    real = socket.getaddrinfo
+    socket.getaddrinfo = lambda *a, **k: sorted(real(*a, **k), key=lambda r: r[0] != socket.AF_INET)
+
+
 def _norm(title):
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
@@ -99,7 +125,8 @@ def lookup_movies(movies, key, log=print):
 
 
 def main():
-    key = os.environ.get("TMDB_API_KEY", "").strip()
+    _prefer_ipv4()
+    key = _env("TMDB_API_KEY")
     if not key:
         sys.exit("Set TMDB_API_KEY first (free key: https://www.themoviedb.org/settings/api).")
     if len(sys.argv) < 3:

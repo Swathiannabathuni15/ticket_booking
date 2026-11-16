@@ -115,7 +115,8 @@ def main():
                 print("   -", t)
     else:
         lookup = __import__("omdb_lookup" if a.source == "omdb" else "tmdb_lookup")
-        key = os.environ.get("OMDB_API_KEY" if a.source == "omdb" else "TMDB_API_KEY", "").strip()
+        lookup._prefer_ipv4()
+        key = lookup._env("OMDB_API_KEY" if a.source == "omdb" else "TMDB_API_KEY")
         if not key:
             sys.exit(f"Set {'OMDB' if a.source == 'omdb' else 'TMDB'}_API_KEY first.")
         movies = [m for m in list_movies(api) if (a.all_movies or not m["poster_url"]) and (not a.language or m["language"] == a.language)]
