@@ -14,11 +14,13 @@ def _hall(rows="ABCD", cols=10, price_of=lambda row: 100.0):
     return out
 
 
-def test_plain_best_block_is_centred_and_a_little_back():
-    b = best_block(_hall(), 2)
-    assert len(b.seats) == 2 and abs(b.off_centre) <= 0.5
-    assert b.seats[0].label[0] in "BC"                         # not the extreme front or the very back
-    assert pick_best_seats(_hall(), 2) == b.seats              # the old helper still works
+def test_plain_best_block_is_centred_and_far_enough_back():
+    small = best_block(_hall(), 2)                              # 4 rows: every row is close, so the back row is the comfortable one
+    assert len(small.seats) == 2 and abs(small.off_centre) <= 0.5 and small.seats[0].label.startswith("A")
+    big = best_block(_hall(rows="ABCDEFGHIJKLMNOPQ", cols=18), 2)
+    assert abs(big.off_centre) <= 0.5
+    assert 6 <= big.rows_from_screen <= 14                      # not jammed against the screen, not the very back
+    assert pick_best_seats(_hall(), 2) == small.seats           # the old helper still works
 
 
 def test_centre_only_keeps_to_the_middle_of_the_row():
@@ -73,7 +75,7 @@ def test_returns_the_best_seats_per_show_sorted_best_first(client):
     h = signup_and_login(client, "taker@example.com")
     # someone is holding the best (centre, middle-back) seats in the 10:00 show, so it must rank lower
     seats = client.get(f"/showtimes/{shows[0]}/seats").json()
-    centre_ids = [s["id"] for s in seats if s["label"][0] in "BC" and s["label"][1:] in ("4", "5", "6", "7")]
+    centre_ids = [s["id"] for s in seats if s["label"][0] == "A" and s["label"][1:] in ("4", "5", "6", "7")]   # the best row
     assert client.post("/holds", json={"seat_ids": centre_ids}, headers=h).status_code == 201
     r = client.get(f"/movies/{movie}/best-seats?count=2")
     assert r.status_code == 200 and len(r.json()) == 4

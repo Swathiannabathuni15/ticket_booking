@@ -134,3 +134,20 @@ describe("uuid works without crypto.randomUUID (a phone on plain http)", () => {
   });
   it("uses the native one when available", () => { expect(uuid()).toMatch(RE); });
 });
+
+import { labelTone, viewWord } from "./components/viewQuality";
+describe("smart picks wording", () => {
+  it("turns the 0-100 view score into plain words", () => {
+    expect(viewWord(100).word).toBe("Excellent view");
+    expect(viewWord(80).tone).toBe("good");
+    expect(viewWord(60).word).toBe("Fair view");
+    expect(viewWord(30)).toEqual({ word: "Poor view", tone: "poor" });
+  });
+  it("colours each kind of option label", () => {
+    expect(labelTone("Best view")).toBe("view");
+    expect(labelTone("Best value")).toBe("value");
+    expect(labelTone("Cheapest")).toBe("cheap");
+    expect(labelTone("Closest to your budget")).toBe("warn");
+    expect(labelTone("Also good")).toBe("plain");
+  });
+});

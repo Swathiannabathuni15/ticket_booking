@@ -139,6 +139,16 @@ export type Booking = {
   payment_status: "paid" | "processing" | "failed" | "unpaid";
   created_at: string; payment_due_at: string | null; paid_at: string | null; user_id?: number;
 };
+export type SeatOption = {
+  labels: string[];                 // Best view / Best value / Cheapest / Also good / Closest to your budget
+  seat_ids: number[]; seat_labels: string[]; seat_type: string;
+  price_each: number; total_price: number;
+  visibility: number;               // 0-100: how well you would see the screen
+  screen_angle: number; side_angle: number; neck_angle: number; rows_from_screen: number; off_centre: number;
+  across_aisle: boolean; aisle_seat: boolean;
+  reasons: string[]; warnings: string[]; over_budget_by: number | null;
+};
+export type SeatOptions = { showtime_id: number; count: number; message: string | null; options: SeatOption[] };
 export type BestShow = {
   showtime_id: number; starts_at: string; movie_title: string; theatre_name: string; city: string; screen_name: string;
   seat_ids: number[]; seat_labels: string[]; seat_type: string; total_price: number;
@@ -191,6 +201,12 @@ export const api = {
     if (f.max_price) q.set("max_price", String(f.max_price));
     if (f.time_of_day) q.set("time_of_day", f.time_of_day);
     return request<BestShow[]>("GET", `/movies/${movieId}/best-seats?${q}`);
+  },
+  seatOptions: (showtimeId: number, f: { count: number; max_total?: number; prefer_aisle?: boolean }) => {
+    const q = new URLSearchParams({ count: String(f.count) });
+    if (f.max_total) q.set("max_total", String(f.max_total));
+    if (f.prefer_aisle) q.set("prefer_aisle", "true");
+    return request<SeatOptions>("GET", `/showtimes/${showtimeId}/seat-options?${q}`);
   },
   showtime: (id: number) => request<Showtime>("GET", `/showtimes/${id}`, { auth: false }),
   bestSeats: (showtimeId: number, count: number, seatType?: string) =>

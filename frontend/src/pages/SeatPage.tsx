@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, ApiError, CUR, uuid, when, type Seat, type Showtime } from "../api";
+import { api, ApiError, CUR, uuid, when, type Seat, type SeatOption, type Showtime } from "../api";
 import { useAuth } from "../auth";
 import SeatMap, { adjacentRun } from "../components/SeatMap";
 import SeatView from "../components/SeatView";
+import SmartPicks from "../components/SmartPicks";
 
 // The 3D hall is a big library: it is only downloaded when someone opens it.
 const Hall3D = lazy(() => import("../components/Hall3D"));
@@ -48,6 +49,7 @@ export default function SeatPage() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ seat: Seat; sticky: boolean } | null>(null);
   const [hall3d, setHall3d] = useState<Seat | null>(null);
+  const [picksOpen, setPicksOpen] = useState(false);          // the "Best available" panel
   const [params] = useSearchParams();
   const suggested = useRef(params.get("seats"));   // from the seat finder, e.g. ?seats=12,13
   const bookKey = useRef(uuid()); // same key on a double click => one booking
@@ -136,15 +138,12 @@ export default function SeatPage() {
     setSelected(new Set(run.map((s) => s.id)));
   }
 
-  async function bestAvailable() {
-    setBusy(true); setError(null);
-    try {
-      const best = await api.bestSeats(showtimeId, pendingQty);
-      setQty(pendingQty);
-      setSelected(new Set(best.map((s) => s.id)));
-      setNotice(`Best ${pendingQty} seats together: ${best.map((s) => s.label).join(", ")}`);
-    } catch (e) { setError(errText(e)); }
-    finally { setBusy(false); }
+  function chooseOption(o: SeatOption) {
+    setError(null);
+    setQty(o.seat_ids.length);
+    setSelected(new Set(o.seat_ids));
+    setPicksOpen(false);
+    setNotice(`Selected ${o.seat_labels.join(", ")} (${o.labels[0].toLowerCase()}). You can change them any time.`);
   }
 
   async function proceed() {
@@ -173,6 +172,7 @@ export default function SeatPage() {
         <h1>{showtime?.movie_title ?? "Choose your seats"}</h1>
         {showtime && <p className="muted">{showtime.theatre_name} - {showtime.screen_name} | {when(showtime.starts_at)}</p>}
         {qty !== null && <button className="chip" onClick={() => { setPendingQty(qty); setQty(null); setSelected(new Set()); }}>{qty} {qty === 1 ? "Ticket" : "Tickets"} - change</button>}
+        {qty !== null && <button className="chip" onClick={() => setPicksOpen(true)}>✨ Best available</button>}
       </div>
       <ErrorBanner message={error} onClose={() => setError(null)} />
       {notice && <Notice>{notice}</Notice>}
@@ -210,6 +210,14 @@ export default function SeatPage() {
         </Suspense>
       )}
 
+      {picksOpen && qty !== null && (
+        <SmartPicks
+          showtimeId={showtimeId} count={qty} seats={seats}
+          onSelect={chooseOption} onClose={() => setPicksOpen(false)}
+          onPreview3D={(id) => { const seat = seats.find((x) => x.id === id); if (seat) setHall3d(seat); }}
+        />
+      )}
+
       {qty === null && (
         <div className="modal-backdrop">
           <div className="modal" role="dialog" aria-label="How many seats?">
@@ -233,7 +241,7 @@ export default function SeatPage() {
             </div>
             <div className="modal-actions">
               <button className="primary big" onClick={() => { setQty(pendingQty); setSelected(new Set()); }}>Select seats</button>
-              <button className="big" disabled={busy} onClick={bestAvailable}>Best available</button>
+              <button className="big" onClick={() => { setQty(pendingQty); setSelected(new Set()); setPicksOpen(true); }}>✨ Best available</button>
             </div>
           </div>
         </div>

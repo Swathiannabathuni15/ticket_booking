@@ -15,7 +15,7 @@ distinction here for a moment is a cosmetic downgrade, not a safety one.
 """
 from typing import NamedTuple
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 import redis
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
@@ -24,8 +24,8 @@ from app.db import get_db
 from app.deps import get_current_user_optional, require_admin
 from app.models import BookingSeat, Movie, Screen, Showtime, ShowtimeSeat, Theatre, User
 from app.redis_client import get_redis
-from app.schemas import SeatOut, ShowtimeCreate, ShowtimeOut
-from app.services import schedule_service
+from app.schemas import SeatOptionOut, SeatOptionsOut, SeatOut, ShowtimeCreate, ShowtimeOut
+from app.services import schedule_service, seat_scoring
 from app.services.booking_service import ACTIVE_STATUSES
 
 router = APIRouter(prefix="/showtimes", tags=["showtimes"])
@@ -160,56 +160,28 @@ class Block(NamedTuple):
     seats: list
     score: float
     rows_from_screen: int
-    off_centre: float        # how many seats left or right of the middle of the row
+    off_centre: float        # how many seats left or right of the middle of the hall
 
 
 def best_block(
     seats: list[SeatOut], count: int, seat_type: str | None = None, *,
     centre_only: bool = False, min_rows_from_screen: int = 0, max_price: float | None = None,
 ) -> Block | None:
-    """`count` ADJACENT available seats in one row (an aisle gap or any unavailable seat
-    breaks adjacency), as close as possible to the best spot: about 60% of the way back,
-    centred left-right. Optional filters:
+    """The best-VIEW group of `count` adjacent free seats (see app/services/seat_scoring.py for how
+    a view is scored), with optional filters:
       centre_only          only seats in the middle 40% of the row
       min_rows_from_screen skip the rows closest to the screen ("not too close")
-      max_price            every seat in the block must cost at most this
+      max_price            every seat in the group must cost at most this
     None if no such group exists."""
-    rows: dict[str, list[tuple[int, SeatOut]]] = {}
-    for s in seats:
-        row, num = _split_label(s.label)
-        rows.setdefault(row, []).append((num, s))
-    order = sorted(rows)
-    ideal = 0.6 * (len(order) - 1)
-    best: Block | None = None
-    for idx, row in enumerate(order):
-        rows_from_screen = len(order) - 1 - idx
-        if rows_from_screen < min_rows_from_screen:
-            continue
-        line = sorted(rows[row], key=lambda t: t[0])
-        centre = (line[0][0] + line[-1][0]) / 2
-        band = 0.2 * (line[-1][0] - line[0][0] + 1)          # the middle 40% of the row
-        run: list[tuple[int, SeatOut]] = []
-        for num, s in line + [(-10, None)]:  # sentinel flushes the last run
-            ok = (s is not None and s.status == "available" and (seat_type is None or s.seat_type == seat_type)
-                  and (max_price is None or s.price <= max_price))
-            if ok and run and num == run[-1][0] + 1:
-                run.append((num, s))
-            else:
-                if len(run) >= count:
-                    for k in range(len(run) - count + 1):
-                        win = run[k:k + count]
-                        mid = (win[0][0] + win[-1][0]) / 2
-                        if centre_only and abs(mid - centre) > band:
-                            continue
-                        score = abs(idx - ideal) * 2 + abs(mid - centre)
-                        if best is None or score < best.score:
-                            best = Block([w[1] for w in win], score, rows_from_screen, round(mid - centre, 1))
-                run = [(num, s)] if ok else []
-    return best
+    c = seat_scoring.best_candidate(
+        seats, count, seat_type, centre_only=centre_only, min_rows_from_screen=min_rows_from_screen, max_price=max_price)
+    if c is None:
+        return None
+    return Block(c.seats, round(100 - c.utility(), 2), c.rows_from_screen, c.off_centre)
 
 
 def pick_best_seats(seats: list[SeatOut], count: int, seat_type: str | None = None) -> list[SeatOut]:
-    """The seats of the best block, or [] (see best_block)."""
+    """The seats of the best-view group, or [] (see best_block)."""
     block = best_block(seats, count, seat_type)
     return block.seats if block else []
 
@@ -227,3 +199,31 @@ def best_seats(
     if not picked:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No {count} adjacent seats available")
     return picked
+
+
+@router.get("/{showtime_id}/seat-options", response_model=SeatOptionsOut)
+def seat_options(
+    showtime_id: int,
+    count: int = Query(2, ge=1, le=8),
+    max_total: float | None = Query(None, gt=0, description="most you want to pay in total"),
+    max_price: float | None = Query(None, gt=0, description="most you want to pay per seat"),
+    prefer_aisle: bool = False,
+    seat_type: str | None = None,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+    r: redis.Redis = Depends(get_redis),
+):
+    """Smart "Best available": up to three different good choices for `count` seats together, each with
+    how well you would see, what it costs, and the reasons. Nothing is reserved by asking."""
+    options, message = seat_scoring.rank_options(
+        seat_map(db, r, user, showtime_id), count, max_total=max_total, max_price=max_price,
+        prefer_aisle=prefer_aisle, seat_type=seat_type)
+    return SeatOptionsOut(showtime_id=showtime_id, count=count, message=message, options=[
+        SeatOptionOut(
+            labels=o.labels, seat_ids=[s.id for s in o.cand.seats], seat_labels=[s.label for s in o.cand.seats],
+            seat_type=o.cand.seat_type, price_each=o.cand.each, total_price=o.cand.total,
+            visibility=o.cand.visibility, screen_angle=round(o.cand.fov), side_angle=round(o.cand.off_axis),
+            neck_angle=round(o.cand.neck), rows_from_screen=o.cand.rows_from_screen, off_centre=o.cand.off_centre,
+            across_aisle=o.cand.across_aisle, aisle_seat=o.cand.aisle, reasons=o.reasons, warnings=o.warnings,
+            over_budget_by=o.over_budget_by,
+        ) for o in options])

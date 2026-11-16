@@ -268,3 +268,31 @@ class BestShowOut(BaseModel):
     rows_from_screen: int
     off_centre: float          # seats left (-) or right (+) of the middle
     score: float               # lower is better
+
+
+class SeatOptionOut(BaseModel):
+    """One suggested group of seats, with the reasons."""
+    labels: list[str]               # Best view / Best value / Cheapest / Closest to your budget
+    seat_ids: list[int]
+    seat_labels: list[str]
+    seat_type: str
+    price_each: float
+    total_price: float
+    visibility: float               # 0-100, how well you would see the screen
+    screen_angle: int               # degrees of your view the screen fills
+    side_angle: int                 # degrees off-centre
+    neck_angle: int                 # degrees you look up to the top of the screen
+    rows_from_screen: int
+    off_centre: float               # seats left (-) / right (+) of the middle
+    across_aisle: bool
+    aisle_seat: bool
+    reasons: list[str]
+    warnings: list[str]
+    over_budget_by: float | None = None
+
+
+class SeatOptionsOut(BaseModel):
+    showtime_id: int
+    count: int
+    message: str | None = None      # explains an empty or compromised answer
+    options: list[SeatOptionOut]
