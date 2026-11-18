@@ -80,45 +80,97 @@ return 0
 """
 
 
-# KEYS = one hold key per seat in the request, in no particular order (no
-# deadlock risk - a Lua script's commands run atomically, so there's no
-# window for two scripts to interleave and wait on each other).
-# ARGV[1] = user_id, ARGV[2] = a fresh token, ARGV[3] = ttl seconds.
-# Checks every key BEFORE writing any of them: if seat i is held by someone
-# else, returns i (1-based) and writes nothing. Otherwise sets every key and
-# returns 0. Re-holding your own already-held seats just refreshes their TTL.
+# THE PER-SHOWTIME CAP IS CHECKED IN THE SAME ATOMIC STEP. Checking "how many do you already hold?"
+# in Python and then acquiring is a race: two requests sent at the same instant both see 4 held, both
+# add 4, and the person ends up with 8 + 8. So each (user, showtime) has an index - a sorted set of the
+# seat ids they hold, scored by expiry time - and the script counts and writes in one go.
+#
+# KEYS = the requested seats' hold keys (n of them), then one index key per showtime in the request.
+# ARGV = user_id, token, ttl, cap, n, then per seat: seat_id, showtime group number (1-based).
+# Returns {0, 0} = held; {1, i} = seat i is someone else's; {2, g} = showtime g would go over the cap.
+# Index entries that expired, or whose seat is no longer this user's (released, booked), are pruned
+# first. (That check reads `seat_hold:<id>` keys by name - fine on one Redis server, which is what this
+# app uses; a Redis Cluster would need hash tags.)
 _ACQUIRE_ALL_OR_NOTHING = """
-for i = 1, #KEYS do
-    local current = redis.call("GET", KEYS[i])
-    if current then
-        local sep = string.find(current, ":")
-        local owner = string.sub(current, 1, sep - 1)
-        if owner ~= ARGV[1] then
-            return i
-        end
+local uid, token, ttl, cap, n = ARGV[1], ARGV[2], tonumber(ARGV[3]), tonumber(ARGV[4]), tonumber(ARGV[5])
+local function owner(v)
+    if not v then return nil end
+    local sep = string.find(v, ":")
+    return string.sub(v, 1, sep - 1)
+end
+for i = 1, n do
+    local cur = redis.call("GET", KEYS[i])
+    if cur and owner(cur) ~= uid then
+        return {1, i}
     end
 end
-for i = 1, #KEYS do
-    redis.call("SET", KEYS[i], ARGV[1] .. ":" .. ARGV[2], "EX", ARGV[3])
+local t = redis.call("TIME")
+local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+for g = 1, #KEYS - n do
+    local idx = KEYS[n + g]
+    redis.call("ZREMRANGEBYSCORE", idx, "-inf", now_ms)
+    local held, count = {}, 0
+    for _, sid in ipairs(redis.call("ZRANGE", idx, 0, -1)) do
+        if owner(redis.call("GET", "seat_hold:" .. sid)) == uid then
+            held[sid] = true
+            count = count + 1
+        else
+            redis.call("ZREM", idx, sid)
+        end
+    end
+    for i = 1, n do
+        local sid = ARGV[4 + 2 * i]
+        if tonumber(ARGV[5 + 2 * i]) == g and not held[sid] then
+            held[sid] = true
+            count = count + 1
+        end
+    end
+    if count > cap then
+        return {2, g}
+    end
 end
-return 0
+for i = 1, n do
+    redis.call("SET", KEYS[i], uid .. ":" .. token, "EX", ttl)
+    local idx = KEYS[n + tonumber(ARGV[5 + 2 * i])]
+    redis.call("ZADD", idx, now_ms + ttl * 1000, ARGV[4 + 2 * i])
+    redis.call("EXPIRE", idx, ttl)
+end
+return {0, 0}
 """
 
 
-def acquire_holds(r: redis.Redis, seat_ids: list[int], user_id: int) -> dict:
-    """Hold one or more seats for `user_id`, all-or-nothing (see module
-    docstring). Re-holding your own seat(s) refreshes their TTL."""
+class HoldCapExceeded(Exception):
+    """Holding these would put the user over the per-showtime limit. args[0] = the showtime id."""
+
+
+def _index_key(user_id: int, showtime_id: int) -> str:
+    return f"user_holds:{user_id}:{showtime_id}"
+
+
+def acquire_holds(
+    r: redis.Redis, seat_ids: list[int], user_id: int, showtime_of: dict[int, int], cap: int | None = None
+) -> dict:
+    """Hold one or more seats for `user_id`, all-or-nothing (see module docstring), and never more than
+    `cap` seats per showtime in total (default: MAX_HELD_SEATS_PER_SHOWTIME). `showtime_of` maps each seat
+    id to its showtime. Re-holding your own seat(s) refreshes their TTL and does not count twice."""
     if not seat_ids:
         raise ValueError("seat_ids must not be empty")
-    keys = [_key(sid) for sid in seat_ids]
-    token = uuid.uuid4().hex
+    cap = settings.max_held_seats_per_showtime if cap is None else cap
+    showtimes = sorted({showtime_of[sid] for sid in seat_ids})
+    group = {st: i + 1 for i, st in enumerate(showtimes)}
+    keys = [_key(sid) for sid in seat_ids] + [_index_key(user_id, st) for st in showtimes]
+    args: list = [str(user_id), uuid.uuid4().hex, HOLD_TTL_SECONDS, cap, len(seat_ids)]
+    for sid in seat_ids:
+        args += [sid, group[showtime_of[sid]]]
     try:
-        blocked_at = r.eval(_ACQUIRE_ALL_OR_NOTHING, len(keys), *keys, str(user_id), token, HOLD_TTL_SECONDS)
-        if blocked_at:
-            raise SeatHeldByOther(seat_ids[blocked_at - 1])
-        return {"seat_ids": seat_ids, "ttl_seconds": HOLD_TTL_SECONDS}
+        code, at = r.eval(_ACQUIRE_ALL_OR_NOTHING, len(keys), *keys, *args)
     except redis.exceptions.RedisError as exc:
         raise HoldUnavailable() from exc
+    if code == 1:
+        raise SeatHeldByOther(seat_ids[at - 1])
+    if code == 2:
+        raise HoldCapExceeded(showtimes[at - 1])
+    return {"seat_ids": seat_ids, "ttl_seconds": HOLD_TTL_SECONDS}
 
 
 def release_holds(r: redis.Redis, seat_ids: list[int], user_id: int) -> int:

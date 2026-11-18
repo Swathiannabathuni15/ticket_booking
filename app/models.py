@@ -122,8 +122,16 @@ class Showtime(Base):
     __tablename__ = "showtimes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"), index=True)
-    screen_id: Mapped[int] = mapped_column(ForeignKey("screens.id"), index=True)
+    # Indexes: (movie, time) for a movie's upcoming shows, (screen, time) for the schedule's overlap
+    # check, and time alone for "what's on in this window" (listings, dashboard).
+    __table_args__ = (
+        Index("ix_showtimes_movie_starts", "movie_id", "starts_at"),
+        Index("ix_showtimes_screen_starts", "screen_id", "starts_at"),
+        Index("ix_showtimes_starts_at", "starts_at"),
+    )
+
+    movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"))
+    screen_id: Mapped[int] = mapped_column(ForeignKey("screens.id"))
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     prices: Mapped[dict] = mapped_column(JSON)  # the BASE prices; seats carry the final ones
     # Which pricing rules changed the seat prices, e.g. "Weekend +20%". None = base prices.
@@ -162,10 +170,12 @@ class ShowtimeSeat(Base):
     """
 
     __tablename__ = "showtime_seats"
+    # The unique (showtime, row, seat) index also serves "all seats of a showtime" (its first column),
+    # so there is no separate showtime_id index to keep up to date on this, the biggest table.
     __table_args__ = (UniqueConstraint("showtime_id", "row_label", "seat_number", name="uq_seat_per_showtime"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    showtime_id: Mapped[int] = mapped_column(ForeignKey("showtimes.id"), index=True)
+    showtime_id: Mapped[int] = mapped_column(ForeignKey("showtimes.id"))
     row_label: Mapped[str] = mapped_column(String(5))
     seat_number: Mapped[int] = mapped_column()
     seat_type: Mapped[str] = mapped_column(String(20))
@@ -190,6 +200,10 @@ class Booking(Base):
     __table_args__ = (
         # Same user + same idempotency key = same booking (safe retries).
         UniqueConstraint("user_id", "idempotency_key", name="uq_user_idempotency_key"),
+        # Small partial indexes for the background jobs and the dashboard: they only hold the rows
+        # those queries look for, so they stay tiny and cheap however many bookings there are.
+        Index("ix_bookings_unpaid_due", "payment_due_at", postgresql_where=text("status = 'pending_payment'")),
+        Index("ix_bookings_paid_at", "paid_at", postgresql_where=text("status = 'confirmed'")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -372,7 +386,10 @@ class PaymentAttempt(Base):
     """
 
     __tablename__ = "payment_attempts"
-    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_attempt_user_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_attempt_user_key"),
+        Index("ix_attempts_pending_created", "created_at", postgresql_where=text("status = 'pending'")),  # sweeper
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), index=True)

@@ -142,7 +142,7 @@ def test_100_users_race_for_one_hold_exactly_one_wins(db):
     def try_hold(user_id: int) -> str:
         r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
         try:
-            holds.acquire_holds(r, [seat_id], user_id)
+            holds.acquire_holds(r, [seat_id], user_id, {seat_id: showtime.id})
             return "won"
         except holds.SeatHeldByOther:
             return "lost"
