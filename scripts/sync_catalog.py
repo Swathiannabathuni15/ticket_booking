@@ -19,6 +19,7 @@ It only supplies the movie LIST. Showtimes are still generated (scripts/schedule
 because real cinema schedules are not available from TMDB.
 TMDB asks apps to show: "This product uses the TMDB API but is not endorsed or certified by TMDB."
 """
+
 import json
 import os
 import sys
@@ -32,8 +33,7 @@ IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 LANG_NAMES = {"te": "Telugu", "hi": "Hindi", "ta": "Tamil", "kn": "Kannada", "ml": "Malayalam", "en": "English"}
 
 
-
-_conn = None   # the one kept-open connection (see _fetch_json)
+_conn = None  # the one kept-open connection (see _fetch_json)
 
 
 def _env(name: str) -> str:
@@ -44,14 +44,15 @@ def _env(name: str) -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     for folder in (os.getcwd(), here, os.path.dirname(here)):
         try:
-            for line in open(os.path.join(folder, ".env")):
-                k, _, v = line.strip().partition("=")
-                if k == name and v.strip():
-                    return v.strip().strip("'\"")
+            with open(os.path.join(folder, ".env")) as f:
+                lines = f.read().splitlines()
         except OSError:
-            pass
+            continue
+        for line in lines:
+            k, _, v = line.strip().partition("=")
+            if k == name and v.strip():
+                return v.strip().strip("'\"")
     return ""
-
 
 
 def _fetch_json(request, tries: int = 15):
@@ -59,6 +60,7 @@ def _fetch_json(request, tries: int = 15):
     each new connection can be reset before it starts, so opening hundreds of them fails; reusing one
     needs far fewer. A dropped connection (or a 429/5xx reply) is retried with a short pause."""
     import http.client
+
     global _conn
     parts = urllib.parse.urlsplit(request.full_url)
     target = parts.path + ("?" + parts.query if parts.query else "")
@@ -72,7 +74,8 @@ def _fetch_json(request, tries: int = 15):
             body = resp.read()
             if resp.status in (429, 500, 502, 503, 504):
                 last = f"HTTP {resp.status}"
-                _conn.close(); _conn = None
+                _conn.close()
+                _conn = None
             elif resp.status >= 400:
                 raise urllib.error.HTTPError(request.full_url, resp.status, resp.reason, resp.headers, None)
             else:
@@ -92,6 +95,7 @@ def _prefer_ipv4() -> None:
     """Try IPv4 addresses first. On some networks IPv6 is advertised but does not work, which makes
     every request wait for a timeout before falling back."""
     import socket
+
     real = socket.getaddrinfo
     socket.getaddrinfo = lambda *a, **k: sorted(real(*a, **k), key=lambda r: r[0] != socket.AF_INET)
 
@@ -145,7 +149,7 @@ def fetch_catalog(key: str, pages: int = 3, log=print) -> list[dict]:
     for tmdb_id, item in seen.items():
         if entry_from_tmdb(item, genres) is None:
             continue
-        runtime = _get(f"/movie/{tmdb_id}", key).get("runtime")          # one extra call each: the list has no runtime
+        runtime = _get(f"/movie/{tmdb_id}", key).get("runtime")  # one extra call each: the list has no runtime
         entries.append(entry_from_tmdb(item, genres, runtime))
         time.sleep(0.05)
     log(f"{len(entries)} movies kept out of {len(seen)} listed")
@@ -165,14 +169,17 @@ def main():
             sys.exit("Set TMDB_API_KEY first (free key: https://www.themoviedb.org/settings/api).")
         entries = fetch_catalog(key)
         if cmd == "fetch":
-            json.dump(entries, open(path, "w"), indent=2)
+            with open(path, "w") as f:
+                json.dump(entries, f, indent=2)
             print(f"Wrote {path}. Next, on the machine with the app: python scripts/sync_catalog.py apply {path}")
             return
     if cmd == "apply":
-        entries = json.load(open(path))
+        with open(path) as f:
+            entries = json.load(f)
     sys.path.insert(0, ".")
     from app.db import SessionLocal
     from app.services.catalog_sync import upsert_movies
+
     with SessionLocal() as db:
         print(upsert_movies(db, entries or [], posters_only="--posters-only" in sys.argv))
 

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, CUR, uuid, when, type Seat, type SeatOption, type Showtime } from "../api";
 import { useAuth } from "../auth";
 import SeatMap, { adjacentRun } from "../components/SeatMap";
@@ -36,7 +36,7 @@ function availability(avail: number, total: number): { text: string; cls: string
 
 export default function SeatPage() {
   const showtimeId = Number(useParams().id);
-  const { user } = useAuth();
+  const { user, openSignIn } = useAuth();
   const nav = useNavigate();
   const [seats, setSeats] = useState<Seat[] | null>(null);
   const [showtime, setShowtime] = useState<Showtime | null>(null);
@@ -147,7 +147,7 @@ export default function SeatPage() {
   }
 
   async function proceed() {
-    if (!user) { nav("/login", { state: { from: `/showtimes/${showtimeId}` } }); return; }
+    if (!user) { openSignIn(`/showtimes/${showtimeId}`); return; }
     setBusy(true); setError(null);
     try {
       if (selected.size > 0) {
@@ -176,7 +176,7 @@ export default function SeatPage() {
       </div>
       <ErrorBanner message={error} onClose={() => setError(null)} />
       {notice && <Notice>{notice}</Notice>}
-      {!user && <Notice><Link to="/login" state={{ from: `/showtimes/${showtimeId}` }}>Log in</Link> to book seats.</Notice>}
+      {!user && <Notice><button className="link" onClick={() => openSignIn(`/showtimes/${showtimeId}`)}>Sign in</button> to book seats.</Notice>}
 
       <SeatMap
         seats={seats} selected={selected} onSeatClick={onSeatClick}

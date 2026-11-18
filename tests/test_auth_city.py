@@ -1,4 +1,7 @@
 """Mobile OTP sign-in, movie metadata, and city filtering."""
+
+from datetime import UTC
+
 from app.config import settings
 from tests.conftest import admin_headers, signup_and_login
 
@@ -48,16 +51,34 @@ def test_otp_without_a_provider_and_demo_mode_off_is_refused(client):
 def _showtime(client, adm, city, title, **movie_extra):
     movie = client.post("/movies", json={"title": title, "duration_minutes": 100, **movie_extra}, headers=adm).json()
     theatre = client.post("/theatres", json={"name": f"T-{city}", "city": city}, headers=adm).json()
-    screen = client.post("/screens", json={"theatre_id": theatre["id"], "name": "S", "rows": [{"row": "A", "seats": ["x"]}]}, headers=adm).json()
-    st = client.post("/showtimes", json={"movie_id": movie["id"], "screen_id": screen["id"],
-                     "starts_at": "2030-01-01T18:00:00", "prices": {"x": 5}}, headers=adm)
+    screen = client.post(
+        "/screens", json={"theatre_id": theatre["id"], "name": "S", "rows": [{"row": "A", "seats": ["x"]}]}, headers=adm
+    ).json()
+    st = client.post(
+        "/showtimes",
+        json={
+            "movie_id": movie["id"],
+            "screen_id": screen["id"],
+            "starts_at": "2030-01-01T18:00:00",
+            "prices": {"x": 5},
+        },
+        headers=adm,
+    )
     return movie, st.json()
 
 
 def test_movie_metadata_and_city_filtering(client):
     adm = admin_headers(client)
-    m1, st1 = _showtime(client, adm, "Hyderabad", "Ramayana", genre="Action/Myth", language="Hindi",
-                        rating=9.3, poster_url="https://example.com/p.jpg")
+    m1, st1 = _showtime(
+        client,
+        adm,
+        "Hyderabad",
+        "Ramayana",
+        genre="Action/Myth",
+        language="Hindi",
+        rating=9.3,
+        poster_url="https://example.com/p.jpg",
+    )
     _showtime(client, adm, "Mumbai", "Scene")
     assert m1["genre"] == "Action/Myth" and m1["language"] == "Hindi" and m1["rating"] == 9.3
     assert st1["city"] == "Hyderabad" and st1["theatre_name"] == "T-Hyderabad"
@@ -70,7 +91,9 @@ def test_movie_metadata_and_city_filtering(client):
 
 def test_movie_poster_must_be_http_url(client):
     adm = admin_headers(client)
-    r = client.post("/movies", json={"title": "X", "duration_minutes": 90, "poster_url": "javascript:alert(1)"}, headers=adm)
+    r = client.post(
+        "/movies", json={"title": "X", "duration_minutes": 90, "poster_url": "javascript:alert(1)"}, headers=adm
+    )
     assert r.status_code == 422
 
 
@@ -83,17 +106,19 @@ def test_get_single_showtime(client):
 
 
 def test_session_is_long_and_can_be_refreshed(client):
+    from datetime import datetime
+
     import jwt
-    from datetime import datetime, timezone
+
     h = signup_and_login(client, "stay@example.com")
     r = client.post("/auth/refresh", headers=h)
     assert r.status_code == 200
     token = r.json()["access_token"]
     assert client.get("/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200
     exp = jwt.decode(token, options={"verify_signature": False})["exp"]
-    days = (datetime.fromtimestamp(exp, timezone.utc) - datetime.now(timezone.utc)).days
-    assert 28 <= days <= 30                                   # about a month
-    assert client.post("/auth/refresh").status_code == 401    # no token, no refresh
+    days = (datetime.fromtimestamp(exp, UTC) - datetime.now(UTC)).days
+    assert 28 <= days <= 30  # about a month
+    assert client.post("/auth/refresh").status_code == 401  # no token, no refresh
     assert client.post("/auth/refresh", headers={"Authorization": "Bearer junk"}).status_code == 401
 
 
@@ -106,12 +131,15 @@ def test_admin_can_update_a_movie_poster_but_others_cannot(client):
     assert client.patch(f"/movies/{m['id']}", json={"poster_url": url}).status_code == 401
     r = client.patch(f"/movies/{m['id']}", json={"poster_url": url, "rating": 8.1}, headers=adm)
     assert r.status_code == 200 and r.json()["poster_url"] == url and r.json()["title"] == "Poster Test"
-    assert client.patch(f"/movies/{m['id']}", json={"poster_url": "javascript:alert(1)"}, headers=adm).status_code == 422
+    assert (
+        client.patch(f"/movies/{m['id']}", json={"poster_url": "javascript:alert(1)"}, headers=adm).status_code == 422
+    )
     assert client.patch("/movies/99999", json={"rating": 5}, headers=adm).status_code == 404
 
 
 def test_booking_carries_the_theatre_for_directions(client):
     from tests.conftest import book_seat_pending, make_showtime_with_seats
+
     h = signup_and_login(client, "d@example.com")
     st = make_showtime_with_seats(client, rows=1, seats_per_row=2)
     b = book_seat_pending(client, h, st["seats"][0]["id"])

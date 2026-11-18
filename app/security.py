@@ -1,6 +1,7 @@
 """Password hashing and JWT tokens."""
+
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from passlib.context import CryptContext
@@ -22,7 +23,7 @@ def create_access_token(user_id: int, session_start: int | None = None) -> str:
     """A login token. `jti` is its unique id (so a logout can cancel THIS token);
     `sst` is when the original sign-in happened and is carried over by /auth/refresh,
     so a session cannot be extended forever (see settings.max_session_days)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
@@ -52,9 +53,10 @@ def decode_access_token(token: str) -> int | None:
 # Separate "purpose" claim so a login token can never be replayed as a share
 # link or the other way round. `nonce` ties the link to the DB row.
 
+
 def create_share_token(share_id: int, nonce: str, ttl_hours: int | None = None) -> str:
     ttl = settings.split_link_ttl_hours if ttl_hours is None else ttl_hours
-    expire = datetime.now(timezone.utc) + timedelta(hours=ttl)
+    expire = datetime.now(UTC) + timedelta(hours=ttl)
     payload = {"sid": share_id, "n": nonce, "purpose": "share", "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 

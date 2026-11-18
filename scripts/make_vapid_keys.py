@@ -6,6 +6,7 @@ Set them as VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY. Keep the private one secret.
 Without them a hosted server makes temporary keys that are lost on every restart,
 and every phone that turned on reminders would stop receiving them.
 """
+
 import sys
 
 sys.path.insert(0, ".")

@@ -13,9 +13,10 @@ WHAT IS NOT KNOWN
     from the title.
 Safe to re-run: titles that already exist are skipped.
 """
+
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -23,18 +24,41 @@ sys.path.insert(0, ".")
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
-PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"   # set ADMIN_PASSWORD for any public server
+PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"  # set ADMIN_PASSWORD for any public server
 
 # (title, genre-if-seen)
 MOVIES = [
     ("Aadarsha Kutumbam House No: 47 (AK 47)", "Action/Comedy/Family/Thriller"),
     ("Summer Holidays", "Adventure/Drama/Kids"),
-    ("Cult", ""), ("Haiku", ""), ("418", ""), ("Garividi Lakshmi", ""), ("Ranabaali", ""),
-    ("Crazy Kalyanam", ""), ("KillR", ""), ("GOAT", ""), ("Idupu Kayitham", ""), ("Itllu Arjuna", ""),
-    ("Bhogi", ""), ("Gummadi Narsaiah", ""), ("Narendra", ""), ("Takshakudu", ""), ("Band Baaja", ""),
-    ("Magic", ""), ("Vankarodu", ""), ("Mike Testing 143", ""), ("Driver Ramudu", ""), ("Chandrayan", ""),
-    ("Donga Naa Koduku", ""), ("Question Mark", ""), ("Seethayanam", ""), ("Police Vari Hecharika", ""),
-    ("Vaddura Sodharaa", ""), ("SDT 19", ""), ("Sigma", ""), ("SI Yugandhar", ""), ("Anakapalli", ""),
+    ("Cult", ""),
+    ("Haiku", ""),
+    ("418", ""),
+    ("Garividi Lakshmi", ""),
+    ("Ranabaali", ""),
+    ("Crazy Kalyanam", ""),
+    ("KillR", ""),
+    ("GOAT", ""),
+    ("Idupu Kayitham", ""),
+    ("Itllu Arjuna", ""),
+    ("Bhogi", ""),
+    ("Gummadi Narsaiah", ""),
+    ("Narendra", ""),
+    ("Takshakudu", ""),
+    ("Band Baaja", ""),
+    ("Magic", ""),
+    ("Vankarodu", ""),
+    ("Mike Testing 143", ""),
+    ("Driver Ramudu", ""),
+    ("Chandrayan", ""),
+    ("Donga Naa Koduku", ""),
+    ("Question Mark", ""),
+    ("Seethayanam", ""),
+    ("Police Vari Hecharika", ""),
+    ("Vaddura Sodharaa", ""),
+    ("SDT 19", ""),
+    ("Sigma", ""),
+    ("SI Yugandhar", ""),
+    ("Anakapalli", ""),
     ("Comrade Kalyan", ""),
 ]
 THEATRES = ["Prasads Multiplex", "Sudha Cinemas", "Asian Cinemas"]
@@ -45,6 +69,7 @@ def patient(client: httpx.Client) -> httpx.Client:
     """The API limits each signed-in user per second. When a seed script goes
     faster than that it gets 429 + Retry-After: wait that long and try again."""
     import time
+
     orig = client.request
 
     def request(method, url, **kw):
@@ -54,6 +79,7 @@ def patient(client: httpx.Client) -> httpx.Client:
                 return r
             time.sleep(float(r.headers.get("Retry-After", "1")))
         return r
+
     client.request = request  # get/post call request() under the hood
     return client
 
@@ -94,13 +120,20 @@ def main():
     for title, genre in MOVIES:
         if title in by_title:
             continue
-        r = c.post("/movies", json={"title": title, "duration_minutes": PLACEHOLDER_MINUTES, "genre": genre,
-                                    "language": "Telugu"}, headers=h)
+        r = c.post(
+            "/movies",
+            json={"title": title, "duration_minutes": PLACEHOLDER_MINUTES, "genre": genre, "language": "Telugu"},
+            headers=h,
+        )
         if r.status_code == 201:
             by_title[title] = r.json()["id"]
             created += 1
     # every listed movie that has no showtimes yet (new, or left over from an interrupted run)
-    new_ids = [by_title[t] for t, _ in MOVIES if t in by_title and not c.get(f"/showtimes?movie_id={by_title[t]}&limit=1").json()]
+    new_ids = [
+        by_title[t]
+        for t, _ in MOVIES
+        if t in by_title and not c.get(f"/showtimes?movie_id={by_title[t]}&limit=1").json()
+    ]
     print(f"{created} new Telugu movies; {len(new_ids)} need showtimes")
     if not new_ids:
         return
@@ -108,27 +141,46 @@ def main():
     # a 144-seat hall: 12 rows, 3 tiers, aisles (2 | 8 | 2)
     def row(letter, kind):
         return {"row": letter, "seats": [kind] * 2 + [None] + [kind] * 8 + [None] + [kind] * 2}
-    rows = [row(l, "premium") for l in "ABC"] + [row(l, "gold") for l in "DEFGH"] + [row(l, "standard") for l in "IJKL"]
+
+    rows = (
+        [row(letter, "premium") for letter in "ABC"]
+        + [row(letter, "gold") for letter in "DEFGH"]
+        + [row(letter, "standard") for letter in "IJKL"]
+    )
     screens = []
     known = {(t["name"], t["city"]): t["id"] for t in all_pages("/theatres")}
     screen_by_theatre = {}
     for sc in all_pages("/screens"):
         screen_by_theatre.setdefault(sc["theatre_id"], sc["id"])
     for name in THEATRES:
-        tid = known.get((name, "Hyderabad")) or c.post("/theatres", json={"name": name, "city": "Hyderabad"}, headers=h).json()["id"]
-        sid = screen_by_theatre.get(tid) or c.post("/screens", json={"theatre_id": tid, "name": "Screen 1", "rows": rows}, headers=h).json()["id"]
+        tid = (
+            known.get((name, "Hyderabad"))
+            or c.post("/theatres", json={"name": name, "city": "Hyderabad"}, headers=h).json()["id"]
+        )
+        sid = (
+            screen_by_theatre.get(tid)
+            or c.post("/screens", json={"theatre_id": tid, "name": "Screen 1", "rows": rows}, headers=h).json()["id"]
+        )
         screens.append(sid)
 
-    day0 = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    day0 = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     made = 0
     for i, mid in enumerate(new_ids):
-        for k in range(2):                       # two theatres per movie
+        for k in range(2):  # two theatres per movie
             screen = screens[(i + k) % len(screens)]
-            for day in (1, 2):                   # tomorrow and the day after
+            for day in (1, 2):  # tomorrow and the day after
                 for hour in (10 + k, 14 + k, 19 + k):
                     start = day0 + timedelta(days=day, hours=hour - day0.hour)
-                    r = c.post("/showtimes", json={"movie_id": mid, "screen_id": screen, "starts_at": start.isoformat(),
-                                                   "prices": {"premium": 250, "gold": 200, "standard": 150}}, headers=h)
+                    r = c.post(
+                        "/showtimes",
+                        json={
+                            "movie_id": mid,
+                            "screen_id": screen,
+                            "starts_at": start.isoformat(),
+                            "prices": {"premium": 250, "gold": 200, "standard": 150},
+                        },
+                        headers=h,
+                    )
                     made += r.status_code == 201
         print(f"  {i + 1}/{len(new_ids)}", end="\r", flush=True)
     print(f"\ncreated {made} showtimes in {len(THEATRES)} Hyderabad theatres")

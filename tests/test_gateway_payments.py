@@ -1,9 +1,10 @@
 """Payments against the simulated bank: idempotency end to end, lost replies,
 signed webhooks, duplicates, late payments, and the safety-net sweeper."""
+
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -30,15 +31,21 @@ def _setup(client, email="a@example.com", seats=2):
 
 
 def _pay(client, h, booking_id, key, method="tok_ok"):
-    return client.post("/payments", json={"booking_id": booking_id, "payment_method": method},
-                       headers={**h, "Idempotency-Key": key})
+    return client.post(
+        "/payments", json={"booking_id": booking_id, "payment_method": method}, headers={**h, "Idempotency-Key": key}
+    )
 
 
 def _webhook(client, event, body=None, header=None):
     raw = body if body is not None else json.dumps(event).encode()
-    return client.post("/webhooks/payments", content=raw, headers={
-        "Content-Type": "application/json",
-        "X-Gateway-Signature": header if header is not None else fake_gateway.sign(raw)})
+    return client.post(
+        "/webhooks/payments",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Gateway-Signature": header if header is not None else fake_gateway.sign(raw),
+        },
+    )
 
 
 def _status(client, h, booking_id):
@@ -54,7 +61,7 @@ def test_declined_card_fails_cleanly_and_a_new_key_can_retry(client, db):
     b = book_seat_pending(client, h, seats[0])
     r = _pay(client, h, b["id"], "key-decline-1", "tok_decline")
     assert r.status_code == 402 and "declined" in r.json()["detail"].lower()
-    assert _status(client, h, b["id"])["status"] == "pending_payment"   # seat still yours
+    assert _status(client, h, b["id"])["status"] == "pending_payment"  # seat still yours
     assert _status(client, h, b["id"])["payment_status"] == "failed"
     # the SAME key replays the SAME failure without calling the bank again
     assert _pay(client, h, b["id"], "key-decline-1", "tok_ok").status_code == 402
@@ -67,9 +74,9 @@ def test_lost_reply_then_webhook_confirms_the_booking(client, db, bank_events):
     h, seats = _setup(client)
     b = book_seat_pending(client, h, seats[0])
     r = _pay(client, h, b["id"], "key-lost-1", "tok_timeout")
-    assert r.status_code == 202                                        # "processing"
+    assert r.status_code == 202  # "processing"
     assert _status(client, h, b["id"])["payment_status"] == "processing"
-    assert _count(db, GatewayCharge) == 1                              # the money DID move
+    assert _count(db, GatewayCharge) == 1  # the money DID move
     assert len(bank_events) == 1 and bank_events[0]["type"] == "payment.succeeded"
 
     assert _webhook(client, bank_events[0]).json()["result"] == "processed"
@@ -85,7 +92,7 @@ def test_retry_with_same_key_recovers_even_if_the_webhook_never_arrives(client, 
     h, seats = _setup(client)
     b = book_seat_pending(client, h, seats[0])
     assert _pay(client, h, b["id"], "key-retry-1", "tok_timeout").status_code == 202
-    r = _pay(client, h, b["id"], "key-retry-1")          # no webhook delivered at all
+    r = _pay(client, h, b["id"], "key-retry-1")  # no webhook delivered at all
     assert r.status_code == 200 and r.json()["status"] == "confirmed"
     assert _count(db, GatewayCharge) == 1 and _count(db, Payment) == 1
     # ...and the late webhook is harmless
@@ -109,15 +116,17 @@ def test_webhook_signature_is_enforced(client, bank_events):
     event = bank_events[0]
     raw = json.dumps(event).encode()
     good = fake_gateway.sign(raw)
-    assert client.post("/webhooks/payments", content=raw).status_code == 400               # no signature
-    assert _webhook(client, event, header="t=1,v1=abc").status_code == 400                 # garbage
-    assert _webhook(client, event, body=raw.replace(b"succeeded", b"succeedex"), header=good).status_code == 400  # tampered body
+    assert client.post("/webhooks/payments", content=raw).status_code == 400  # no signature
+    assert _webhook(client, event, header="t=1,v1=abc").status_code == 400  # garbage
+    assert (
+        _webhook(client, event, body=raw.replace(b"succeeded", b"succeedex"), header=good).status_code == 400
+    )  # tampered body
     old = int(time.time()) - settings.payment_webhook_tolerance_seconds - 60
     assert _webhook(client, event, header=fake_gateway.sign(raw, old)).status_code == 400  # replayed later
     wrong = fake_gateway.sign(raw, secret="not-the-secret")
-    assert _webhook(client, event, header=wrong).status_code == 400                        # wrong secret
+    assert _webhook(client, event, header=wrong).status_code == 400  # wrong secret
     assert _webhook(client, event, body=b"not json", header=fake_gateway.sign(b"not json")).status_code == 400
-    assert _webhook(client, event).status_code == 200                                      # the real one works
+    assert _webhook(client, event).status_code == 200  # the real one works
 
 
 def test_payment_arriving_after_the_booking_was_cancelled_is_refunded(client, db, bank_events):
@@ -126,7 +135,7 @@ def test_payment_arriving_after_the_booking_was_cancelled_is_refunded(client, db
     _pay(client, h, b["id"], "key-late-1", "tok_timeout")
     assert client.delete(f"/bookings/{b['id']}", headers=h).status_code == 200  # seat may be resold now
     assert _webhook(client, bank_events[0]).status_code == 200
-    assert _status(client, h, b["id"])["status"] == "cancelled"                  # NOT confirmed
+    assert _status(client, h, b["id"])["status"] == "cancelled"  # NOT confirmed
     assert _count(db, Payment) == 0
     db.expire_all()
     assert db.scalar(select(GatewayCharge.status)) == "refunded"
@@ -164,7 +173,7 @@ def test_sweeper_finishes_a_payment_whose_webhook_never_came(client, db, bank_ev
     h, seats = _setup(client)
     b = book_seat_pending(client, h, seats[0])
     _pay(client, h, b["id"], "key-sweep-1", "tok_timeout")
-    assert reconcile_pending_attempts(db) == 0                   # too fresh to chase
+    assert reconcile_pending_attempts(db) == 0  # too fresh to chase
     settings.payment_reconcile_after_seconds = 0
     try:
         assert reconcile_pending_attempts(db) == 1
@@ -178,15 +187,18 @@ def test_unpaid_expiry_does_not_cancel_a_booking_with_a_payment_in_flight(client
     b = book_seat_pending(client, h, seats[0])
     _pay(client, h, b["id"], "key-exp-1", "tok_timeout")
     booking = db.get(Booking, b["id"])
-    booking.payment_due_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    booking.payment_due_at = datetime.now(UTC) - timedelta(minutes=1)
     db.commit()
     assert expire_unpaid_bookings(db) == 0
     assert _status(client, h, b["id"])["status"] == "pending_payment"
 
 
 def test_webhook_for_an_unknown_payment_is_acknowledged(client):
-    event = {"id": "evt_x1", "type": "payment.succeeded",
-             "data": {"idempotency_key": "9999:nope", "charge_id": "ch_x", "amount_cents": 1}}
+    event = {
+        "id": "evt_x1",
+        "type": "payment.succeeded",
+        "data": {"idempotency_key": "9999:nope", "charge_id": "ch_x", "amount_cents": 1},
+    }
     assert _webhook(client, event).json()["result"] == "unknown"
 
 

@@ -168,3 +168,15 @@ describe("ticketCodeFrom (what a scanned QR code or typed text means)", () => {
     expect(ticketCodeFrom("https://evil.example/login")).toBeNull();
   });
 });
+
+import { safeInternalPath } from "./auth";
+
+describe("safeInternalPath (where to go after signing in)", () => {
+  it("allows pages on this site", () => {
+    expect(safeInternalPath("/bookings/3/ticket")).toBe("/bookings/3/ticket");
+  });
+  it("refuses anything that could leave the site", () => {
+    for (const bad of ["//evil.com", "/\\evil.com", "https://evil.com", "evil.com", "/\t/evil.com", "", undefined])
+      expect(safeInternalPath(bad)).toBeNull();
+  });
+});

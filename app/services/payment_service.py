@@ -30,14 +30,16 @@ THE SOLUTION (each piece answers one failure)
     6. DB BACKSTOPS: payments.booking_id UNIQUE, payment_attempts
        (user_id, idempotency_key) UNIQUE, webhook_events.event_id UNIQUE.
 """
+
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.db import required
 from app.models import Booking, BookingSeat, Payment, PaymentAttempt, WebhookEvent
 from app.services import fake_gateway, ticket_email, ticket_service
 from app.services.split_service import booking_total_cents
@@ -74,7 +76,7 @@ class KeyReused(Exception):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _find_attempt(db: Session, user_id: int, key: str) -> PaymentAttempt | None:
@@ -95,17 +97,22 @@ def _start_attempt(db: Session, user_id: int, booking_id: int, key: str) -> tupl
             raise AlreadyPaid(booking_id)
         if booking.status != "pending_payment":
             raise BookingNotPayable(booking_id)
-        same_key = _find_attempt(db, user_id, key)   # a concurrent request with this key got here first
+        same_key = _find_attempt(db, user_id, key)  # a concurrent request with this key got here first
         if same_key is not None:
             db.commit()
             return same_key, False
-        in_flight = db.scalar(select(PaymentAttempt.id).where(
-            PaymentAttempt.booking_id == booking_id, PaymentAttempt.status == "pending"))
+        in_flight = db.scalar(
+            select(PaymentAttempt.id).where(PaymentAttempt.booking_id == booking_id, PaymentAttempt.status == "pending")
+        )
         if in_flight is not None:
             raise PaymentInProgress(booking_id)
         attempt = PaymentAttempt(
-            booking_id=booking_id, user_id=user_id, idempotency_key=key, gateway_key=f"{user_id}:{key}",
-            amount_cents=booking_total_cents(db, booking_id), status="pending",
+            booking_id=booking_id,
+            user_id=user_id,
+            idempotency_key=key,
+            gateway_key=f"{user_id}:{key}",
+            amount_cents=booking_total_cents(db, booking_id),
+            status="pending",
         )
         db.add(attempt)
         db.commit()  # saved BEFORE the bank is called
@@ -137,8 +144,10 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
     try:
         booking_id = db.scalar(select(PaymentAttempt.booking_id).where(PaymentAttempt.id == attempt_id))
         # Same lock order everywhere (booking, then attempt) so two paths can't deadlock.
-        booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
-        attempt = db.scalar(select(PaymentAttempt).where(PaymentAttempt.id == attempt_id).with_for_update())
+        booking = required(db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update()), "booking")
+        attempt = required(
+            db.scalar(select(PaymentAttempt).where(PaymentAttempt.id == attempt_id).with_for_update()), "attempt"
+        )
         if attempt.status in ("succeeded", "refunded"):
             db.commit()
             return booking
@@ -150,7 +159,7 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
             # BookingSeat.status is a denormalized copy - see app/models.py.
             db.execute(update(BookingSeat).where(BookingSeat.booking_id == booking.id).values(status="confirmed"))
             attempt.status = "succeeded"
-            ticket_service.issue_ticket(db, booking)      # the QR e-ticket, in the same transaction
+            ticket_service.issue_ticket(db, booking)  # the QR e-ticket, in the same transaction
             just_confirmed = True
         else:
             attempt.status = "refunded"
@@ -164,7 +173,7 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
         fake_gateway.refund(refund_key)
         log.warning("refunded charge %s: booking %s was not payable", charge_id, booking_id)
     if just_confirmed:
-        ticket_email.notify(booking.id)           # best effort, after commit; the sweeper retries
+        ticket_email.notify(booking.id)  # best effort, after commit; the sweeper retries
     return booking
 
 
@@ -172,10 +181,10 @@ def pay_booking(
     db: Session, user_id: int, booking_id: int, idempotency_key: str, method: str = "tok_ok"
 ) -> tuple[Booking, str]:
     """Pay for a booking. Returns (booking, outcome):
-       "created"    - paid now
-       "replayed"   - this key was already used; here is the original result
-       "processing" - the bank charged (or may have) but we have no answer yet;
-                      the webhook / a retry / the sweeper will finish it
+    "created"    - paid now
+    "replayed"   - this key was already used; here is the original result
+    "processing" - the bank charged (or may have) but we have no answer yet;
+                   the webhook / a retry / the sweeper will finish it
     """
     attempt = _find_attempt(db, user_id, idempotency_key)
     is_new = False
@@ -186,7 +195,7 @@ def pay_booking(
 
     if not is_new:
         if attempt.status == "succeeded":
-            return db.get(Booking, booking_id), "replayed"
+            return required(db.get(Booking, booking_id), "booking"), "replayed"
         if attempt.status == "failed":
             raise PaymentDeclined(attempt.failure_reason or "Payment failed")
         if attempt.status == "refunded":
@@ -206,7 +215,7 @@ def pay_booking(
         _mark_failed(db, attempt.id, exc.reason)
         raise PaymentDeclined(exc.reason) from exc
     except fake_gateway.GatewayTimeout:
-        return db.get(Booking, booking_id), "processing"
+        return required(db.get(Booking, booking_id), "booking"), "processing"
     return _settle_success(db, attempt.id, charge.charge_id), "created"
 
 
@@ -243,10 +252,12 @@ def reconcile_pending_attempts(db: Session) -> int:
     'bank charged' and 'we recorded it'). Asks the bank about old pending attempts."""
     now = _now()
     fixed = 0
-    pending = db.scalars(select(PaymentAttempt).where(
-        PaymentAttempt.status == "pending",
-        PaymentAttempt.created_at < now - timedelta(seconds=settings.payment_reconcile_after_seconds),
-    )).all()
+    pending = db.scalars(
+        select(PaymentAttempt).where(
+            PaymentAttempt.status == "pending",
+            PaymentAttempt.created_at < now - timedelta(seconds=settings.payment_reconcile_after_seconds),
+        )
+    ).all()
     for a in pending:
         charge = fake_gateway.get_charge(a.gateway_key)
         if charge is not None and charge.status == "succeeded":
@@ -274,9 +285,11 @@ def expire_unpaid_bookings(db: Session) -> int:
     on truly stuck ones). Returns the number cancelled.
     """
     now = _now()
-    in_flight = select(PaymentAttempt.id).where(
-        PaymentAttempt.booking_id == Booking.id, PaymentAttempt.status == "pending"
-    ).exists()
+    in_flight = (
+        select(PaymentAttempt.id)
+        .where(PaymentAttempt.booking_id == Booking.id, PaymentAttempt.status == "pending")
+        .exists()
+    )
     result = db.execute(
         update(Booking)
         .where(Booking.status == "pending_payment", Booking.payment_due_at < now, ~in_flight)
@@ -286,8 +299,6 @@ def expire_unpaid_bookings(db: Session) -> int:
     expired_ids = [row[0] for row in result]
     if expired_ids:
         # BookingSeat.status is a denormalized copy - see app/models.py.
-        db.execute(
-            update(BookingSeat).where(BookingSeat.booking_id.in_(expired_ids)).values(status="cancelled")
-        )
+        db.execute(update(BookingSeat).where(BookingSeat.booking_id.in_(expired_ids)).values(status="cancelled"))
     db.commit()
     return len(expired_ids)

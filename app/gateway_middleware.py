@@ -18,6 +18,7 @@ What this does NOT cover (honest limits):
 Webhooks (/webhooks/*), /health and the API docs are exempt: the bank is
 authenticated by its signature, not by a user token.
 """
+
 import json
 
 from starlette.concurrency import run_in_threadpool
@@ -59,10 +60,17 @@ class PerUserRateLimit:
             )
         except rate_limit.RateLimitExceeded as exc:
             body = json.dumps({"detail": "Too many requests, slow down"}).encode()
-            await send({"type": "http.response.start", "status": 429, "headers": [
-                (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()),
-                (b"retry-after", str(exc.retry_after_seconds).encode()),
-            ]})
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode()),
+                        (b"retry-after", str(exc.retry_after_seconds).encode()),
+                    ],
+                }
+            )
             await send({"type": "http.response.body", "body": body})
             return
         await self.app(scope, receive, send)

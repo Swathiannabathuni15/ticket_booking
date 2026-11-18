@@ -1,4 +1,5 @@
 """Admin role: only admins can create catalogue data (see app/deps.py require_admin)."""
+
 from sqlalchemy import select
 
 from app.models import User
@@ -39,6 +40,7 @@ def test_me_reports_admin_status(client, db):
 
 def test_admin_bookings_list_and_cors(client):
     from tests.conftest import admin_headers, signup_and_login
+
     user = signup_and_login(client, "u@example.com")
     assert client.get("/admin/bookings").status_code == 401
     assert client.get("/admin/bookings", headers=user).status_code == 403
@@ -46,8 +48,11 @@ def test_admin_bookings_list_and_cors(client):
     assert client.get("/admin/bookings", headers=admin).json() == []
     r = client.options(
         "/bookings/me",
-        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "GET",
-                 "Access-Control-Request-Headers": "authorization,idempotency-key"},
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,idempotency-key",
+        },
     )
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
@@ -57,12 +62,13 @@ def test_cors_allows_any_localhost_port_but_not_other_sites(client):
     def origin_header(origin):
         r = client.options("/bookings/me", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
         return r.headers.get("access-control-allow-origin")
+
     assert origin_header("http://localhost:5174") == "http://localhost:5174"
     assert origin_header("http://127.0.0.1:5199") == "http://127.0.0.1:5199"
-    assert origin_header("http://192.168.1.20:5173") == "http://192.168.1.20:5173"      # a phone on the home Wi-Fi
+    assert origin_header("http://192.168.1.20:5173") == "http://192.168.1.20:5173"  # a phone on the home Wi-Fi
     assert origin_header("http://10.0.3.7:5173") == "http://10.0.3.7:5173"
     assert origin_header("http://172.20.1.1:5173") == "http://172.20.1.1:5173"
-    assert origin_header("http://8.8.8.8:5173") is None                                  # a public address is not "local"
+    assert origin_header("http://8.8.8.8:5173") is None  # a public address is not "local"
     assert origin_header("http://172.40.1.1:5173") is None
     assert origin_header("https://evil.example.com") is None
     assert origin_header("http://localhost.evil.com") is None

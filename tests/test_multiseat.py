@@ -4,9 +4,10 @@ app/services/booking_service.py's module docstrings for the two different
 atomicity guarantees (all-or-nothing for Redis holds, fixed lock order for
 the Postgres row locks) and why each is needed.
 """
+
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -138,7 +139,9 @@ def _make_showtime_with_n_seats(db, n: int) -> list[int]:
     db.add(screen)
     db.flush()
     showtime = Showtime(
-        movie_id=movie.id, screen_id=screen.id, starts_at=datetime.now(timezone.utc),
+        movie_id=movie.id,
+        screen_id=screen.id,
+        starts_at=datetime.now(UTC),
         prices={"standard": 10},
     )
     db.add(showtime)

@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+import contextlib
+
 import redis
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,7 +18,9 @@ router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 
 @router.post(
-    "", response_model=BookingOut, status_code=status.HTTP_201_CREATED,
+    "",
+    response_model=BookingOut,
+    status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(limit_bookings_per_user)],
 )
 def create_booking(
@@ -39,32 +43,28 @@ def create_booking(
     if not retrying:
         try:
             if not holds.has_valid_holds(r, seat_ids, user.id):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "Hold every seat first: POST /holds"
-                )
+                raise HTTPException(status.HTTP_409_CONFLICT, "Hold every seat first: POST /holds")
         except holds.HoldUnavailable:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Seat holds are temporarily unavailable, try again shortly",
-            )
+            ) from None
 
     try:
         booking, created = svc.book_seats(db, user.id, seat_ids, idempotency_key)
     except svc.SeatNotFound as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Seat not found: {exc.args[0]}")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Seat not found: {exc.args[0]}") from exc
     except svc.SeatsSpanMultipleShowtimes:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "All seats in one booking must belong to the same showtime"
-        )
+        ) from None
     except svc.SeatAlreadyBooked as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat(s) already booked: {exc.args[0]}")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat(s) already booked: {exc.args[0]}") from exc
     if not created:
         response.status_code = status.HTTP_200_OK  # a retry, not a new booking
     else:
-        try:
+        with contextlib.suppress(holds.HoldUnavailable):  # booking is committed; holds just expire on their own
             holds.release_holds(r, seat_ids, user.id)
-        except holds.HoldUnavailable:
-            pass  # booking is already committed; the holds just expire on their own
     return booking
 
 
@@ -79,6 +79,6 @@ def cancel(booking_id: int, db: Session = Depends(get_db), user: User = Depends(
     try:
         return svc.cancel_booking(db, user.id, booking_id)
     except svc.BookingNotFound:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found") from None
     except svc.NotYourBooking:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your booking")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your booking") from None

@@ -1,5 +1,6 @@
 """Split the bill (A5): rounding, wrong totals, double pay, expired and
 tampered links, owner cancel."""
+
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import func, select
@@ -38,12 +39,14 @@ def test_custom_split_wrong_total_rejected(client):
     h, bid = _paid_booking(client, price=10.0)
     r = client.post(
         f"/bookings/{bid}/split",
-        json={"friends": ["Ann"], "mode": "custom", "custom_cents": [500, 400]}, headers=h,
+        json={"friends": ["Ann"], "mode": "custom", "custom_cents": [500, 400]},
+        headers=h,
     )
     assert r.status_code == 422
     r = client.post(
         f"/bookings/{bid}/split",
-        json={"friends": ["Ann"], "mode": "custom", "custom_cents": [600, 400]}, headers=h,
+        json={"friends": ["Ann"], "mode": "custom", "custom_cents": [600, 400]},
+        headers=h,
     )
     assert r.status_code == 201
 
@@ -100,6 +103,7 @@ def test_expired_link(client):
     share = client.post(f"/bookings/{bid}/split", json={"friends": ["Ann"]}, headers=h).json()["shares"][1]
     from app.db import SessionLocal
     from app.models import SplitShare
+
     with SessionLocal() as s:
         nonce = s.get(SplitShare, share["id"]).nonce
     expired = create_share_token(share["id"], nonce, ttl_hours=-1)

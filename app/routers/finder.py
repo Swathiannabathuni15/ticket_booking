@@ -4,8 +4,9 @@ Our own code on our own data: it reads our seat maps (the same ones the booking 
 ranks the best group of adjacent seats in each show, with optional filters. See best_block in
 app/routers/showtimes.py for how a group is scored.
 """
+
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import redis
@@ -31,7 +32,7 @@ MAX_SHOWS = 30
 def in_time_of_day(starts_at: datetime, name: str) -> bool:
     local = starts_at.astimezone(ZoneInfo(settings.display_timezone))
     lo, hi = TIMES_OF_DAY[name]
-    hour = local.hour + (24 if local.hour < lo and hi > 24 else 0)       # 1am counts as hour 25 for "night"
+    hour = local.hour + (24 if local.hour < lo and hi > 24 else 0)  # 1am counts as hour 25 for "night"
     return lo <= hour < hi
 
 
@@ -51,13 +52,22 @@ def best_seats_for_movie(
 ):
     if db.get(Movie, movie_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Movie not found")
-    stmt = (select(Showtime).where(Showtime.movie_id == movie_id, Showtime.starts_at > datetime.now(timezone.utc))
-            .order_by(Showtime.starts_at))
+    stmt = (
+        select(Showtime)
+        .where(Showtime.movie_id == movie_id, Showtime.starts_at > datetime.now(UTC))
+        .order_by(Showtime.starts_at)
+    )
     if city:
-        stmt = stmt.join(Screen, Screen.id == Showtime.screen_id).join(Theatre, Theatre.id == Screen.theatre_id) \
+        stmt = (
+            stmt.join(Screen, Screen.id == Showtime.screen_id)
+            .join(Theatre, Theatre.id == Screen.theatre_id)
             .where(Theatre.city.ilike(city))
-    showtimes = [s for s in db.scalars(stmt.limit(MAX_SHOWS * 3)).all()
-                 if time_of_day is None or in_time_of_day(s.starts_at, time_of_day)][:MAX_SHOWS]
+        )
+    showtimes = [
+        s
+        for s in db.scalars(stmt.limit(MAX_SHOWS * 3)).all()
+        if time_of_day is None or in_time_of_day(s.starts_at, time_of_day)
+    ][:MAX_SHOWS]
 
     out = []
     for st in showtimes:
@@ -66,17 +76,30 @@ def best_seats_for_movie(
             continue
         n_rows = len({s.label.rstrip("0123456789") for s in seats})
         block = best_block(
-            seats, count, centre_only=centre_only, max_price=max_price,
-            min_rows_from_screen=math.ceil(n_rows * 0.25) if not_too_close else 0,   # skip the front quarter
+            seats,
+            count,
+            centre_only=centre_only,
+            max_price=max_price,
+            min_rows_from_screen=math.ceil(n_rows * 0.25) if not_too_close else 0,  # skip the front quarter
         )
         if block is None:
             continue
-        out.append(BestShowOut(
-            showtime_id=st.id, starts_at=st.starts_at, movie_title=st.movie_title, theatre_name=st.theatre_name,
-            city=st.city, screen_name=st.screen_name, seat_ids=[s.id for s in block.seats],
-            seat_labels=[s.label for s in block.seats], seat_type=block.seats[0].seat_type,
-            total_price=round(sum(s.price for s in block.seats), 2), rows_from_screen=block.rows_from_screen,
-            off_centre=block.off_centre, score=round(block.score, 2),
-        ))
+        out.append(
+            BestShowOut(
+                showtime_id=st.id,
+                starts_at=st.starts_at,
+                movie_title=st.movie_title,
+                theatre_name=st.theatre_name,
+                city=st.city,
+                screen_name=st.screen_name,
+                seat_ids=[s.id for s in block.seats],
+                seat_labels=[s.label for s in block.seats],
+                seat_type=block.seats[0].seat_type,
+                total_price=round(sum(s.price for s in block.seats), 2),
+                rows_from_screen=block.rows_from_screen,
+                off_centre=block.off_centre,
+                score=round(block.score, 2),
+            )
+        )
     out.sort(key=lambda o: (o.score, o.starts_at))
     return out[:limit]

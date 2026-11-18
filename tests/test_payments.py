@@ -1,7 +1,8 @@
 """Fake payments: two-step booking, idempotent retries, double-payment
 rejection, and expiry of an unpaid booking (see app/services/payment_service.py).
 """
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
 
 import redis
 
@@ -10,7 +11,11 @@ from app.jobs.tasks import expire_unpaid_bookings_job
 from app.models import Booking
 from app.services.payment_service import expire_unpaid_bookings
 from tests.conftest import (
-    TEST_REDIS_DB, book_seat_pending, hold_seats, make_showtime_with_seats, signup_and_login,
+    TEST_REDIS_DB,
+    book_seat_pending,
+    hold_seats,
+    make_showtime_with_seats,
+    signup_and_login,
 )
 
 
@@ -34,9 +39,7 @@ def test_paying_confirms_the_booking(client):
     _, seat_id = _showtime_with_one_seat(client)
     booking = book_seat_pending(client, h, seat_id)
 
-    r = client.post(
-        "/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-1"}
-    )
+    r = client.post("/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-1"})
     assert r.status_code == 201
     assert r.json()["status"] == "confirmed"
     assert r.json()["paid_at"] is not None
@@ -61,6 +64,7 @@ def test_payment_retry_with_same_key_does_not_charge_twice(client, db):
     assert datetime.fromisoformat(first_body["paid_at"]) == datetime.fromisoformat(retry_body["paid_at"])
 
     from app.models import Payment
+
     assert db.query(Payment).filter_by(booking_id=booking["id"]).count() == 1
 
 
@@ -71,14 +75,10 @@ def test_double_payment_with_a_different_key_is_rejected(client):
     _, seat_id = _showtime_with_one_seat(client)
     booking = book_seat_pending(client, h, seat_id)
 
-    first = client.post(
-        "/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-a"}
-    )
+    first = client.post("/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-a"})
     assert first.status_code == 201
 
-    second = client.post(
-        "/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-b"}
-    )
+    second = client.post("/payments", json={"booking_id": booking["id"]}, headers={**h, "Idempotency-Key": "pay-b"})
     assert second.status_code == 409
 
 
@@ -88,9 +88,7 @@ def test_cannot_pay_for_someone_elses_booking(client):
     _, seat_id = _showtime_with_one_seat(client)
     booking = book_seat_pending(client, h1, seat_id)
 
-    r = client.post(
-        "/payments", json={"booking_id": booking["id"]}, headers={**h2, "Idempotency-Key": "pay-steal"}
-    )
+    r = client.post("/payments", json={"booking_id": booking["id"]}, headers={**h2, "Idempotency-Key": "pay-steal"})
     assert r.status_code == 403
 
 
@@ -102,7 +100,7 @@ def test_expired_unpaid_booking_is_cancelled_and_frees_the_seat(client, db):
 
     # Force the booking overdue, as the sweep job would eventually find it.
     row = db.get(Booking, booking["id"])
-    row.payment_due_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    row.payment_due_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
 
     closed = expire_unpaid_bookings(db)
@@ -111,9 +109,7 @@ def test_expired_unpaid_booking_is_cancelled_and_frees_the_seat(client, db):
     assert row.status == "cancelled"
 
     # Paying for the now-cancelled booking must fail...
-    r = client.post(
-        "/payments", json={"booking_id": booking["id"]}, headers={**h1, "Idempotency-Key": "too-late"}
-    )
+    r = client.post("/payments", json={"booking_id": booking["id"]}, headers={**h1, "Idempotency-Key": "too-late"})
     assert r.status_code == 409
 
     # ...and the seat must be free for someone else.
@@ -131,7 +127,7 @@ def test_expiry_job_runs_inline_through_the_real_queue(client, db):
     booking = book_seat_pending(client, h, seat_id)
 
     row = db.get(Booking, booking["id"])
-    row.payment_due_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    row.payment_due_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
 
     conn = redis.Redis(host="localhost", port=6379, db=TEST_REDIS_DB)
@@ -168,7 +164,7 @@ def test_expired_multi_seat_booking_cancels_every_seat_in_it(client, db):
     booking = client.post("/bookings", json={"seat_ids": seat_ids}, headers=h1).json()
 
     row = db.get(Booking, booking["id"])
-    row.payment_due_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    row.payment_due_at = datetime.now(UTC) - timedelta(seconds=1)
     db.commit()
 
     closed = expire_unpaid_bookings(db)

@@ -1,9 +1,10 @@
 """Shared guard for the seed / admin scripts."""
+
 import sys
 from urllib.parse import urlparse
 
 DEFAULT_PASSWORD = "demo-password-1"
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}  # noqa: S104 (a list to compare against, not a bind)
 
 
 def require_real_admin_password(base_url: str, password: str) -> None:

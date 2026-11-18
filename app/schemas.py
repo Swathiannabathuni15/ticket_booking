@@ -1,4 +1,5 @@
 """Request and response shapes (validated by Pydantic)."""
+
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -19,7 +20,7 @@ class Credentials(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 (the OAuth word, not a secret)
 
 
 class UserOut(BaseModel):
@@ -32,6 +33,7 @@ class UserOut(BaseModel):
 
 class _OtpTarget(BaseModel):
     """Who the code is for: a phone number OR an email address (exactly one)."""
+
     phone: str | None = Field(default=None, pattern=r"^\+?[0-9]{10,15}$")
     email: EmailStr | None = None
 
@@ -52,8 +54,8 @@ class OtpRequest(_OtpTarget):
 
 class OtpRequestOut(BaseModel):
     sent: bool = True
-    channel: str = "screen"          # sms | email | screen (demo: no provider configured)
-    destination: str = ""            # masked, e.g. +91*****3210
+    channel: str = "screen"  # sms | email | screen (demo: no provider configured)
+    destination: str = ""  # masked, e.g. +91*****3210
     expires_in_seconds: int
     # ONLY in demo mode: the code, so the flow can be tried without a provider.
     dev_otp: str | None = None
@@ -75,6 +77,7 @@ class MovieCreate(BaseModel):
 
 class MovieUpdate(BaseModel):
     """Admin edits. Only the fields you send are changed."""
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     duration_minutes: int | None = Field(default=None, gt=0, le=600)
     poster_url: str | None = Field(default=None, max_length=500, pattern=r"^https?://")
@@ -94,7 +97,7 @@ class MovieOut(BaseModel):
     language: str = "English"
     rating: float | None = None
     release_date: date | None = None
-    status: str = "now_showing"        # now_showing | coming_soon
+    status: str = "now_showing"  # now_showing | coming_soon
 
 
 class TheatreCreate(BaseModel):
@@ -241,6 +244,7 @@ class SplitOut(BaseModel):
 
 class ShareLinkView(BaseModel):
     """What a friend sees on the public link: no emails, no booking internals."""
+
     name: str
     amount_cents: int
     status: str
@@ -255,6 +259,7 @@ class AdminBookingOut(BookingOut):
 
 class BestShowOut(BaseModel):
     """One show, and the best group of seats in it, for the seat finder."""
+
     showtime_id: int
     starts_at: datetime
     movie_title: str
@@ -266,24 +271,25 @@ class BestShowOut(BaseModel):
     seat_type: str
     total_price: float
     rows_from_screen: int
-    off_centre: float          # seats left (-) or right (+) of the middle
-    score: float               # lower is better
+    off_centre: float  # seats left (-) or right (+) of the middle
+    score: float  # lower is better
 
 
 class SeatOptionOut(BaseModel):
     """One suggested group of seats, with the reasons."""
-    labels: list[str]               # Best view / Best value / Cheapest / Closest to your budget
+
+    labels: list[str]  # Best view / Best value / Cheapest / Closest to your budget
     seat_ids: list[int]
     seat_labels: list[str]
     seat_type: str
     price_each: float
     total_price: float
-    visibility: float               # 0-100, how well you would see the screen
-    screen_angle: int               # degrees of your view the screen fills
-    side_angle: int                 # degrees off-centre
-    neck_angle: int                 # degrees you look up to the top of the screen
+    visibility: float  # 0-100, how well you would see the screen
+    screen_angle: int  # degrees of your view the screen fills
+    side_angle: int  # degrees off-centre
+    neck_angle: int  # degrees you look up to the top of the screen
     rows_from_screen: int
-    off_centre: float               # seats left (-) / right (+) of the middle
+    off_centre: float  # seats left (-) / right (+) of the middle
     across_aisle: bool
     aisle_seat: bool
     reasons: list[str]
@@ -294,17 +300,18 @@ class SeatOptionOut(BaseModel):
 class SeatOptionsOut(BaseModel):
     showtime_id: int
     count: int
-    message: str | None = None      # explains an empty or compromised answer
+    message: str | None = None  # explains an empty or compromised answer
     options: list[SeatOptionOut]
 
 
 class TicketOut(BaseModel):
     """The owner's e-ticket."""
+
     booking_id: int
     ticket_code: str
-    ticket_url: str                 # what the QR code contains
-    qr_image: str                   # a data: URI (SVG) to show the QR code
-    state: str                      # valid | used | cancelled
+    ticket_url: str  # what the QR code contains
+    qr_image: str  # a data: URI (SVG) to show the QR code
+    state: str  # valid | used | cancelled
     movie_title: str
     poster_url: str | None = None
     theatre_name: str
@@ -320,8 +327,9 @@ class TicketOut(BaseModel):
 
 class TicketPublicOut(BaseModel):
     """What anyone holding a ticket's code may see: nothing about who bought it."""
+
     ticket_code: str
-    state: str                      # valid | used | cancelled
+    state: str  # valid | used | cancelled
     movie_title: str
     poster_url: str | None = None
     theatre_name: str
@@ -333,6 +341,6 @@ class TicketPublicOut(BaseModel):
 
 
 class CheckInOut(BaseModel):
-    result: str                     # admitted | already_used | cancelled | too_early | expired | invalid
+    result: str  # admitted | already_used | cancelled | too_early | expired | invalid
     message: str
     ticket: TicketPublicOut | None = None

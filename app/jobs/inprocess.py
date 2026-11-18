@@ -6,6 +6,7 @@ webhook never came, cancel unpaid bookings, and send "starts soon" notifications
 A short Redis lock means that if several server processes run, only one does each
 round. (With a real worker setup keep BACKGROUND_JOBS=off.)
 """
+
 import logging
 import threading
 import time
@@ -32,15 +33,19 @@ def tick(r: redis.Redis | None = None) -> dict:
         if not r.set(LOCK_KEY, "1", nx=True, ex=max(1, settings.payment_sweep_interval_seconds - 5)):
             return {"skipped": True}
     except redis.exceptions.RedisError:
-        return {"skipped": True}          # no Redis: do nothing rather than run unlocked
-    out = {}
+        return {"skipped": True}  # no Redis: do nothing rather than run unlocked
+    out: dict[str, int | str] = {}
     with SessionLocal() as db:
-        for name, fn in (("reconciled", reconcile_pending_attempts), ("expired", expire_unpaid_bookings),
-                         ("reminders", send_due_reminders),
-                         ("ticket_emails", send_pending_confirmations), ("scheduled", lambda d: extend_schedule_if_due(d, r))):
+        for name, fn in (
+            ("reconciled", reconcile_pending_attempts),
+            ("expired", expire_unpaid_bookings),
+            ("reminders", send_due_reminders),
+            ("ticket_emails", send_pending_confirmations),
+            ("scheduled", lambda d: extend_schedule_if_due(d, r)),
+        ):
             try:
                 out[name] = fn(db)
-            except Exception:             # one failing job must not stop the others
+            except Exception:  # one failing job must not stop the others
                 db.rollback()
                 log.exception("job %s failed", name)
                 out[name] = "error"

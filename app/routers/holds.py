@@ -4,8 +4,9 @@ Holding several seats at once (one order) is all-or-nothing: see
 app/services/hold_service.py's module docstring for why that needs a single
 Lua script rather than a loop of single-seat acquires.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+
 import redis
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -74,8 +75,7 @@ def create_hold(
             if len(net_after) > settings.max_held_seats_per_showtime:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    f"Cannot hold more than {settings.max_held_seats_per_showtime} seats "
-                    "at once on one showtime",
+                    f"Cannot hold more than {settings.max_held_seats_per_showtime} seats " "at once on one showtime",
                 )
     except holds.HoldUnavailable:
         _unavailable()
@@ -83,7 +83,7 @@ def create_hold(
     try:
         result = holds.acquire_holds(r, seat_ids, user.id)
     except holds.SeatHeldByOther as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat {exc.args[0]} is held by another user")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat {exc.args[0]} is held by another user") from exc
     except holds.HoldUnavailable:
         _unavailable()
     return HoldOut(seat_ids=result["seat_ids"], ttl_seconds=result["ttl_seconds"])

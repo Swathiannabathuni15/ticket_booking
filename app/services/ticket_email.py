@@ -9,18 +9,19 @@ NEVER BLOCKS PAYMENT. Sending happens after the payment is committed, in a backg
 is caught and logged. With no SMTP settings (the demo) nothing is sent and the ticket is still on the website.
 Phone-only accounts have no email address; they see the ticket in "My bookings".
 """
+
 import html
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, required
 from app.models import Booking, User
 from app.services import ticket_service
 from app.services.otp_delivery import DeliveryFailed, email_configured, smtp_send
@@ -42,7 +43,7 @@ def _local(dt: datetime) -> datetime:
 
 def build_message(booking: Booking, to: str) -> EmailMessage:
     st = booking.showtime
-    code = booking.ticket_code
+    code = required(booking.ticket_code, "ticket code")
     start = _local(st.starts_at)
     when = start.strftime("%a, %d %b %Y, %I:%M %p")
     seats = ", ".join(booking.seat_labels)
@@ -62,8 +63,9 @@ def build_message(booking: Booking, to: str) -> EmailMessage:
         f"Ticket code: {code}\nShow this at the entrance, or open: {link}\n\n"
         f"Directions: {directions}\n\n- {brand}\n"
     )
-    e = html.escape   # movie and theatre names come from outside data: never trust them in HTML
-    msg.add_alternative(f"""\
+    e = html.escape  # movie and theatre names come from outside data: never trust them in HTML
+    msg.add_alternative(
+        f"""\
 <!doctype html><html><body style="margin:0;background:#f2f2f2;font-family:Arial,Helvetica,sans-serif;color:#222">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" style="max-width:520px;background:#fff;border-radius:12px;overflow:hidden" cellpadding="0" cellspacing="0">
@@ -86,11 +88,20 @@ def build_message(booking: Booking, to: str) -> EmailMessage:
 </td></tr></table>
 <div style="color:#999;font-size:12px;margin-top:12px">The calendar file attached adds the show to your calendar.</div>
 </td></tr></table></body></html>
-""", subtype="html")
+""",
+        subtype="html",
+    )
     # The QR code as an inline image (cid:ticket-qr): most mail apps block images from links, not inline ones.
-    msg.get_payload()[1].add_related(ticket_service.qr_png(code), maintype="image", subtype="png", cid="<ticket-qr>")
-    msg.add_attachment(ticket_service.ics_for(booking).encode(), maintype="text", subtype="calendar",
-                       filename="ticket.ics", params={"method": "PUBLISH"})
+    required(msg.get_body(preferencelist=("html",)), "html part").add_related(
+        ticket_service.qr_png(code), maintype="image", subtype="png", cid="<ticket-qr>"
+    )
+    msg.add_attachment(
+        ticket_service.ics_for(booking).encode(),
+        maintype="text",
+        subtype="calendar",
+        filename="ticket.ics",
+        params={"method": "PUBLISH"},
+    )
     return msg
 
 
@@ -108,20 +119,22 @@ def send_confirmation(db: Session, booking_id: int, *, force: bool = False) -> b
         return False
     to = _address(db, booking)
     if not to:
-        return False                      # phone-only account: nothing to send to
-    now = datetime.now(timezone.utc)
+        return False  # phone-only account: nothing to send to
+    now = datetime.now(UTC)
     if not force:
-        claimed = db.execute(
-            update(Booking).where(Booking.id == booking_id, Booking.confirmation_emailed_at.is_(None))
+        result: CursorResult = db.execute(  # type: ignore[assignment]
+            update(Booking)
+            .where(Booking.id == booking_id, Booking.confirmation_emailed_at.is_(None))
             .values(confirmation_emailed_at=now)
-        ).rowcount
+        )
+        claimed = result.rowcount
         db.commit()
         if not claimed:
-            return False                  # someone else already sent (or is sending) it
+            return False  # someone else already sent (or is sending) it
     try:
         smtp_send(build_message(booking, to))
     except DeliveryFailed:
-        if not force:                     # give the claim back so the sweeper tries again
+        if not force:  # give the claim back so the sweeper tries again
             db.execute(update(Booking).where(Booking.id == booking_id).values(confirmation_emailed_at=None))
             db.commit()
         raise
@@ -154,18 +167,24 @@ def send_pending_confirmations(db: Session, now: datetime | None = None, limit: 
     or the server restarted before it ran)."""
     if not email_configured():
         return 0
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     ids = db.scalars(
-        select(Booking.id).join(User, User.id == Booking.user_id)
-        .where(Booking.status == "confirmed", Booking.ticket_code.is_not(None),
-               Booking.confirmation_emailed_at.is_(None), Booking.paid_at >= now - CATCH_UP_WINDOW,
-               User.email.is_not(None))
-        .order_by(Booking.id).limit(limit)
+        select(Booking.id)
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.status == "confirmed",
+            Booking.ticket_code.is_not(None),
+            Booking.confirmation_emailed_at.is_(None),
+            Booking.paid_at >= now - CATCH_UP_WINDOW,
+            User.email.is_not(None),
+        )
+        .order_by(Booking.id)
+        .limit(limit)
     ).all()
     sent = 0
     for booking_id in ids:
         try:
             sent += send_confirmation(db, booking_id)
         except DeliveryFailed:
-            break                         # the mail server is down: stop this round, try again next time
+            break  # the mail server is down: stop this round, try again next time
     return sent

@@ -9,6 +9,7 @@ database directly, so it uses the same DATABASE_URL as the app (your .env).
 
 The showtimes are generated, not real cinema schedules.
 """
+
 import argparse
 import sys
 

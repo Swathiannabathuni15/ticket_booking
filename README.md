@@ -184,6 +184,14 @@ python -m pytest -q        # backend
 cd frontend && npm test    # frontend
 ```
 
+Code checks (the same ones CI runs). Install them once with `pip install -r requirements-dev.txt`:
+```
+ruff check . && ruff format --check .   # lint and formatting
+mypy                                    # type checks
+pip-audit -r requirements.txt           # known security holes in Python packages
+cd frontend && npm audit --omit=dev     # the same for the website
+```
+
 ## Load test result
 
 1,000 users, 260 seats, on one laptop that also ran the test tools:

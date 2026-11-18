@@ -3,6 +3,7 @@
 Pulls jobs off the "payments" queue and runs them. Needs
 app.jobs.scheduler_loop running somewhere too, to actually enqueue jobs.
 """
+
 from rq import Worker
 
 from app.jobs.queue import get_queue

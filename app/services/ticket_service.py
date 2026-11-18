@@ -9,10 +9,11 @@ CHECK-IN marks a ticket used exactly once, under a row lock, so two scanners rea
 same moment cannot both admit it. Only staff (admins) can check people in; anyone can SEE a ticket's status
 from its code (no personal details), which is what a phone camera scan opens.
 """
+
 import io
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -21,12 +22,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.db import required
 from app.models import Booking
 from app.schemas import CheckInOut, TicketOut, TicketPublicOut
 
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-ENTRY_OPENS_BEFORE = timedelta(hours=3)        # staff can admit from 3 hours before the show...
-ENTRY_CLOSES_AFTER = timedelta(hours=1)        # ...until an hour after it ends
+ENTRY_OPENS_BEFORE = timedelta(hours=3)  # staff can admit from 3 hours before the show...
+ENTRY_CLOSES_AFTER = timedelta(hours=1)  # ...until an hour after it ends
 
 
 def new_code() -> str:
@@ -95,28 +97,47 @@ def directions_url(theatre: str, city: str) -> str:
 
 def public_view(booking: Booking) -> TicketPublicOut:
     st = booking.showtime
+    code = required(booking.ticket_code, "ticket code")
     return TicketPublicOut(
-        ticket_code=booking.ticket_code, state=state_of(booking), movie_title=st.movie_title,
-        poster_url=st.movie.poster_url, theatre_name=st.theatre_name, city=st.city, screen_name=st.screen_name,
-        starts_at=st.starts_at, seat_labels=booking.seat_labels, checked_in_at=booking.checked_in_at,
+        ticket_code=code,
+        state=state_of(booking),
+        movie_title=st.movie_title,
+        poster_url=st.movie.poster_url,
+        theatre_name=st.theatre_name,
+        city=st.city,
+        screen_name=st.screen_name,
+        starts_at=st.starts_at,
+        seat_labels=booking.seat_labels,
+        checked_in_at=booking.checked_in_at,
     )
 
 
 def owner_view(booking: Booking) -> TicketOut:
     p = public_view(booking)
     return TicketOut(
-        booking_id=booking.id, ticket_code=p.ticket_code, ticket_url=ticket_url(p.ticket_code),
-        qr_image=qr_data_uri(p.ticket_code), state=p.state, movie_title=p.movie_title, poster_url=p.poster_url,
-        theatre_name=p.theatre_name, city=p.city, screen_name=p.screen_name, starts_at=p.starts_at,
-        ends_at=ends_at(booking), seat_labels=p.seat_labels, total_cents=booking.total_cents,
-        checked_in_at=p.checked_in_at, directions_url=directions_url(p.theatre_name, p.city),
+        booking_id=booking.id,
+        ticket_code=p.ticket_code,
+        ticket_url=ticket_url(p.ticket_code),
+        qr_image=qr_data_uri(p.ticket_code),
+        state=p.state,
+        movie_title=p.movie_title,
+        poster_url=p.poster_url,
+        theatre_name=p.theatre_name,
+        city=p.city,
+        screen_name=p.screen_name,
+        starts_at=p.starts_at,
+        ends_at=ends_at(booking),
+        seat_labels=p.seat_labels,
+        total_cents=booking.total_cents,
+        checked_in_at=p.checked_in_at,
+        directions_url=directions_url(p.theatre_name, p.city),
     )
 
 
 def check_in(db: Session, code: str, now: datetime | None = None) -> CheckInOut:
     """Admit the ticket holder, once. The row is locked while we decide, so two scans of the same ticket at the
     same instant cannot both succeed."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     code = normalize(code)
     booking = db.scalar(select(Booking).where(Booking.ticket_code == code).with_for_update()) if code else None
     if booking is None:
@@ -148,18 +169,29 @@ def _ics_escape(text: str) -> str:
 def ics_for(booking: Booking, now: datetime | None = None) -> str:
     """A calendar event (with a reminder an hour before) the person can add to any calendar app."""
     fmt = "%Y%m%dT%H%M%SZ"
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     st = booking.showtime
+    code = required(booking.ticket_code, "ticket code")
+    seats = ", ".join(booking.seat_labels)
     lines = [
-        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ticketshow//E-ticket//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT",
-        f"UID:{booking.ticket_code}@ticketshow",
-        f"DTSTAMP:{now.astimezone(timezone.utc).strftime(fmt)}",
-        f"DTSTART:{st.starts_at.astimezone(timezone.utc).strftime(fmt)}",
-        f"DTEND:{ends_at(booking).astimezone(timezone.utc).strftime(fmt)}",
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Ticketshow//E-ticket//EN",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{code}@ticketshow",
+        f"DTSTAMP:{now.astimezone(UTC).strftime(fmt)}",
+        f"DTSTART:{st.starts_at.astimezone(UTC).strftime(fmt)}",
+        f"DTEND:{ends_at(booking).astimezone(UTC).strftime(fmt)}",
         f"SUMMARY:{_ics_escape(st.movie_title + ' at ' + st.theatre_name)}",
         f"LOCATION:{_ics_escape(st.theatre_name + ', ' + st.city)}",
-        f"DESCRIPTION:{_ics_escape('Seats ' + ', '.join(booking.seat_labels) + '. Ticket code ' + booking.ticket_code + '. ' + ticket_url(booking.ticket_code))}",
-        "BEGIN:VALARM", "TRIGGER:-PT60M", "ACTION:DISPLAY", "DESCRIPTION:Your movie starts in an hour", "END:VALARM",
-        "END:VEVENT", "END:VCALENDAR",
+        f"DESCRIPTION:{_ics_escape(f'Seats {seats}. Ticket code {code}. {ticket_url(code)}')}",
+        "BEGIN:VALARM",
+        "TRIGGER:-PT60M",
+        "ACTION:DISPLAY",
+        "DESCRIPTION:Your movie starts in an hour",
+        "END:VALARM",
+        "END:VEVENT",
+        "END:VCALENDAR",
     ]
     return "\r\n".join(lines) + "\r\n"

@@ -21,6 +21,7 @@ Options: --base http://localhost:8000   --all-movies (include ones that already 
 Posters are linked from TMDB's image server, not copied. TMDB asks apps to show:
 "This product uses the TMDB API but is not endorsed or certified by TMDB." (the website footer does).
 """
+
 import argparse
 import json
 import os
@@ -31,7 +32,7 @@ import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 EMAIL = os.environ.get("ADMIN_EMAIL", "admin@demo-cinema.com")
-PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"   # set ADMIN_PASSWORD for any public server
+PASSWORD = os.environ.get("ADMIN_PASSWORD") or "demo-password-1"  # set ADMIN_PASSWORD for any public server
 ALLOWED_FIELDS = ("poster_url", "duration_minutes", "genre", "rating")
 # A poster link in a result file may only point at TMDB's image server.
 ALLOWED_POSTER_HOSTS = ("https://image.tmdb.org/",)
@@ -56,7 +57,7 @@ def apply_posters(api, headers: dict, entries: list[dict]) -> int:
         if not str(patch.get("poster_url", "")).startswith(ALLOWED_POSTER_HOSTS):
             print(f"  skipped {e.get('title')}: poster is not from TMDB's image server")
             continue
-        for _ in range(20):                      # the API limits each user per second: wait and retry
+        for _ in range(20):  # the API limits each user per second: wait and retry
             r = api.patch(f"/movies/{e['id']}", json=patch, headers=headers)
             if r.status_code != 429:
                 break
@@ -95,7 +96,10 @@ def main():
     a = ap.parse_args()
 
     api, headers = connect(a.base)
-    wanted = lambda m: (a.all_movies or not m["poster_url"]) and (not a.language or m["language"] == a.language)
+
+    def wanted(m):
+        return (a.all_movies or not m["poster_url"]) and (not a.language or m["language"] == a.language)
+
     if a.command == "export":
         movies = [m for m in list_movies(api) if wanted(m)]
         out = a.file or "movies.json"
@@ -105,7 +109,8 @@ def main():
     elif a.command == "apply":
         if not a.file:
             sys.exit("Usage: fetch_posters.py apply posters.json")
-        data = json.load(open(a.file))
+        with open(a.file) as f:
+            data = json.load(f)
         n = apply_posters(api, headers, data["posters"])
         print(f"\nUpdated {n} movies.")
         if data.get("unmatched"):
@@ -114,13 +119,16 @@ def main():
                 print("   -", t)
     else:
         import tmdb_lookup as lookup
+
         lookup._prefer_ipv4()
         key = lookup._env("TMDB_API_KEY")
         if not key:
             sys.exit("Set TMDB_API_KEY first (free key: https://www.themoviedb.org/settings/api).")
         movies = [m for m in list_movies(api) if wanted(m)]
         found, unmatched = lookup.lookup_movies(movies, key)
-        print(f"\nUpdated {apply_posters(api, headers, found)} movies; {len(unmatched)} not matched (left as they were):")
+        print(
+            f"\nUpdated {apply_posters(api, headers, found)} movies; {len(unmatched)} not matched (left as they were):"
+        )
         for t in unmatched:
             print("   -", t)
 

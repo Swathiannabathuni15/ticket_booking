@@ -1,7 +1,8 @@
 """E-tickets and the confirmation email (app/services/ticket_service.py, ticket_email.py, routers/tickets.py)."""
+
 import email
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -12,15 +13,15 @@ from app.services import ticket_email, ticket_service
 from tests.conftest import admin_headers, book_seat_pending, make_showtime_with_seats, signup_and_login
 from tests.test_otp_delivery import _MailSink
 
-SHOW_START = datetime(2030, 1, 1, 12, 30, tzinfo=timezone.utc)    # make_showtime_with_seats' show: 18:00 India time
+SHOW_START = datetime(2030, 1, 1, 12, 30, tzinfo=UTC)  # make_showtime_with_seats' show: 18:00 India time
 
 
 @pytest.fixture(autouse=True)
 def _settings_and_inline_email():
     keys = ["smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from", "smtp_starttls"]
     saved = {k: getattr(settings, k) for k in keys}
-    settings.smtp_host = ""                  # email off unless a test turns it on
-    ticket_email.RUN_IN_THREAD = False       # send before the call returns, so tests can check it
+    settings.smtp_host = ""  # email off unless a test turns it on
+    ticket_email.RUN_IN_THREAD = False  # send before the call returns, so tests can check it
     yield
     ticket_email.RUN_IN_THREAD = True
     for k, v in saved.items():
@@ -51,6 +52,7 @@ def _parse(raw: str):
 
 # ---------- codes ----------
 
+
 def test_codes_are_random_readable_and_normalize():
     codes = {ticket_service.new_code() for _ in range(200)}
     assert len(codes) == 200
@@ -60,10 +62,11 @@ def test_codes_are_random_readable_and_normalize():
     c = next(iter(codes))
     assert ticket_service.normalize(c.lower().replace("-", " ")) == c
     assert ticket_service.normalize("short") == ""
-    assert ticket_service.normalize("OOOO-OOOO-OOOO") == ""     # letters that are not in the alphabet
+    assert ticket_service.normalize("OOOO-OOOO-OOOO") == ""  # letters that are not in the alphabet
 
 
 # ---------- the owner's ticket ----------
+
 
 def test_paying_issues_a_ticket_with_a_qr_code(client):
     h, booking_id = _paid_booking(client)
@@ -108,11 +111,12 @@ def test_calendar_file(client):
     assert r.headers["content-type"].startswith("text/calendar")
     body = r.text
     assert "BEGIN:VEVENT" in body and "DTSTART:20300101T123000Z" in body
-    assert "DTEND:20300101T143000Z" in body          # 120-minute movie
+    assert "DTEND:20300101T143000Z" in body  # 120-minute movie
     assert "Test Movie at Test Theatre" in body and "TRIGGER:-PT60M" in body
 
 
 # ---------- the public page a QR scan opens ----------
+
 
 def test_public_view_shows_the_show_but_nothing_personal(client):
     h, booking_id = _paid_booking(client)
@@ -128,6 +132,7 @@ def test_public_view_shows_the_show_but_nothing_personal(client):
 
 # ---------- check-in at the door ----------
 
+
 def _code(client, h, booking_id):
     return client.get(f"/bookings/{booking_id}/ticket", headers=h).json()["ticket_code"]
 
@@ -137,7 +142,7 @@ def test_check_in_needs_staff(client):
     code = _code(client, h, booking_id)
     assert client.post(f"/tickets/{code}/check-in", headers=h).status_code == 403
     r = client.post(f"/tickets/{code}/check-in", headers=admin_headers(client, "door@example.com"))
-    assert r.status_code == 200 and r.json()["result"] == "too_early"   # the show is in 2030
+    assert r.status_code == 200 and r.json()["result"] == "too_early"  # the show is in 2030
 
 
 def test_check_in_admits_once(client, db):
@@ -180,12 +185,15 @@ def test_two_scanners_at_the_same_moment_admit_once(client):
             results.append(ticket_service.check_in(s, code, SHOW_START).result)
 
     threads = [threading.Thread(target=scan) for _ in range(4)]
-    for t in threads: t.start()
-    for t in threads: t.join()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     assert sorted(results) == ["admitted", "already_used", "already_used", "already_used"]
 
 
 # ---------- the confirmation email ----------
+
 
 def test_confirmation_email_is_sent_once_with_qr_and_calendar(client, mail, db):
     _, booking_id = _paid_booking(client)
@@ -223,8 +231,8 @@ def test_no_email_without_smtp_and_payment_still_works(client, db):
 def test_mail_server_down_does_not_break_payment_and_sweeper_retries(client, db):
     settings.smtp_host, settings.smtp_port, settings.smtp_from = "127.0.0.1", 1, "no-reply@ticketshow.test"
     settings.smtp_starttls, settings.smtp_user = False, ""
-    _, booking_id = _paid_booking(client)                 # payment still succeeds
-    assert db.get(Booking, booking_id).confirmation_emailed_at is None   # claim was given back
+    _, booking_id = _paid_booking(client)  # payment still succeeds
+    assert db.get(Booking, booking_id).confirmation_emailed_at is None  # claim was given back
 
     sink = _MailSink()
     try:
@@ -240,7 +248,7 @@ def test_sweeper_skips_old_bookings(client, mail, db):
     settings.smtp_host = ""
     _, booking_id = _paid_booking(client)
     settings.smtp_host = "127.0.0.1"
-    later = datetime.now(timezone.utc) + timedelta(days=2)
+    later = datetime.now(UTC) + timedelta(days=2)
     assert ticket_email.send_pending_confirmations(db, now=later) == 0
     assert ticket_email.send_pending_confirmations(db) == 1
 
@@ -263,6 +271,7 @@ def test_resend_without_email_setup_says_so(client):
 
 def test_phone_only_account_gets_no_email(client, mail, db):
     from app.models import User
+
     _, booking_id = _paid_booking(client, email_addr="phone-user@example.com")
     mail.messages.clear()
     booking = db.get(Booking, booking_id)

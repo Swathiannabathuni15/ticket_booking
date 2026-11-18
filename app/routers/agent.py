@@ -1,4 +1,5 @@
 """POST /agent/chat - the booking assistant (see app/services/agent_service.py)."""
+
 import redis
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -33,10 +34,12 @@ def chat(
     llm: svc.LLMClient = Depends(svc.get_llm),
 ):
     try:
-        rate_limit.check(r, f"agent:{user.id}", settings.rate_limit_agent_per_window, settings.rate_limit_window_seconds)
+        rate_limit.check(
+            r, f"agent:{user.id}", settings.rate_limit_agent_per_window, settings.rate_limit_window_seconds
+        )
     except rate_limit.RateLimitExceeded as exc:
         _too_many_requests(exc.retry_after_seconds)
     try:
         return ChatOut(reply=svc.chat(db, r, user, llm, body.message))
     except svc.AgentUnavailable as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc

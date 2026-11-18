@@ -22,6 +22,7 @@ FAIL OPEN
     hold_service - because there the cost of failing open is a double
     booking, not just a bit of extra load.)
 """
+
 import logging
 import time
 

@@ -9,6 +9,7 @@ Trade-off, on purpose: if Redis is unreachable we fail OPEN (a revoked token wor
 again until Redis is back) rather than lock every user out of the site. Tokens made
 before this feature have no `jti`, so they cannot be revoked and simply expire.
 """
+
 import logging
 import time
 

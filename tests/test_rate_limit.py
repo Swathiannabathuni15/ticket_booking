@@ -1,4 +1,5 @@
 """Fixed-window rate limiting (see app/services/rate_limit.py)."""
+
 import time
 
 import pytest
@@ -8,6 +9,7 @@ from app.config import settings
 from app.main import app
 from app.redis_client import get_redis
 from tests.conftest import _test_redis, make_showtime_with_seats, signup_and_login
+
 
 @pytest.fixture(autouse=True)
 def _start_in_a_fresh_window():
@@ -80,6 +82,7 @@ def test_rate_limiter_fails_open_when_redis_is_down(client):
 
 # ---- limits are per IDENTITY (email / phone / user id), not per IP ----------
 
+
 def test_login_limit_is_per_email_not_per_ip(client):
     """Every request here comes from the same client address."""
     other = {"email": "b@example.com", "password": "password123"}
@@ -88,8 +91,8 @@ def test_login_limit_is_per_email_not_per_ip(client):
     settings.rate_limit_login_per_window = 3
     for _ in range(3):
         assert client.post("/auth/login", json=LOGIN_BODY).status_code == 200
-    assert client.post("/auth/login", json=LOGIN_BODY).status_code == 429       # account a is throttled...
-    assert client.post("/auth/login", json=other).status_code == 200            # ...account b, same IP, is not
+    assert client.post("/auth/login", json=LOGIN_BODY).status_code == 429  # account a is throttled...
+    assert client.post("/auth/login", json=other).status_code == 200  # ...account b, same IP, is not
     # case does not give a second bucket
     assert client.post("/auth/login", json={**LOGIN_BODY, "email": "A@Example.com"}).status_code == 429
 
@@ -103,7 +106,9 @@ def test_wrong_password_guesses_are_throttled_per_account(client):
 
 def test_otp_limits_are_per_phone_number(client):
     settings.rate_limit_login_per_window = 2
-    codes = [client.post("/auth/otp/verify", json={"phone": "9111111111", "code": "000000"}).status_code for _ in range(3)]
+    codes = [
+        client.post("/auth/otp/verify", json={"phone": "9111111111", "code": "000000"}).status_code for _ in range(3)
+    ]
     assert codes == [401, 401, 429]
     assert client.post("/auth/otp/verify", json={"phone": "9222222222", "code": "000000"}).status_code == 401
 
@@ -116,8 +121,8 @@ def test_gateway_limits_each_user_per_second_and_users_are_independent(client):
     assert 429 in codes and codes[0] == 200
     blocked = client.get("/me", headers=h1)
     assert blocked.status_code == 429 and blocked.headers["Retry-After"] == "1" or 200 in (blocked.status_code,)
-    assert client.get("/me", headers=h2).status_code == 200                      # another user is unaffected
-    time.sleep(1.1)                                                              # a new second: allowed again
+    assert client.get("/me", headers=h2).status_code == 200  # another user is unaffected
+    time.sleep(1.1)  # a new second: allowed again
     assert client.get("/me", headers=h1).status_code == 200
 
 
@@ -133,6 +138,8 @@ def test_gateway_does_not_limit_webhooks_health_or_anonymous_requests(client):
 def test_payments_are_limited_per_user(client):
     h = signup_and_login(client, "a@example.com")
     settings.rate_limit_payment_per_window = 2
-    codes = [client.post("/payments", json={"booking_id": 999}, headers={**h, "Idempotency-Key": f"k{i}"}).status_code
-             for i in range(3)]
+    codes = [
+        client.post("/payments", json={"booking_id": 999}, headers={**h, "Idempotency-Key": f"k{i}"}).status_code
+        for i in range(3)
+    ]
     assert codes == [404, 404, 429]

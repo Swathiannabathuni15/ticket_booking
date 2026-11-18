@@ -1,4 +1,5 @@
 """Shared FastAPI dependencies (current logged-in user)."""
+
 import redis
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

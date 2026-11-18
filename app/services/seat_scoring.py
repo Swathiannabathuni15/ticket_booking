@@ -15,6 +15,7 @@ A group of seats is scored by the average of its seats, then adjusted for the "r
   - an aisle seat, when you asked for one (a small bonus)
   - price: used to pick the best-VALUE and cheapest options, never to hide the best-VIEW one.
 """
+
 import math
 from dataclasses import dataclass
 
@@ -24,8 +25,8 @@ from app.schemas import SeatOut
 ROW_DEPTH, PITCH, SCREEN_GAP, RISE, EYE, SCREEN_BOTTOM = 1.1, 0.55, 3.0, 0.22, 1.1, 1.4
 COMFORT_FOV = (38.0, 58.0)
 ORPHAN_PENALTY, AISLE_BONUS = 10.0, 6.0
-SWEET_SPOT_FOV = 48.0       # many rows can all be "perfect"; the best view is the one nearest this
-GOOD_ENOUGH = 55.0          # the "cheapest" option must be at least this good to see from
+SWEET_SPOT_FOV = 48.0  # many rows can all be "perfect"; the best view is the one nearest this
+GOOD_ENOUGH = 55.0  # the "cheapest" option must be at least this good to see from
 
 
 def split_label(label: str) -> tuple[str, int]:
@@ -35,11 +36,11 @@ def split_label(label: str) -> tuple[str, int]:
 
 @dataclass(frozen=True)
 class Hall:
-    rows: list[str]                 # sorted; rows[0] is the back
+    rows: list[str]  # sorted; rows[0] is the back
     n_cols: int
     screen_w: float
     screen_h: float
-    present: dict[str, set[int]]    # seat numbers that exist in each row (a missing number = aisle)
+    present: dict[str, set[int]]  # seat numbers that exist in each row (a missing number = aisle)
 
 
 def build_hall(seats: list[SeatOut]) -> Hall:
@@ -56,10 +57,10 @@ def build_hall(seats: list[SeatOut]) -> Hall:
 class Metrics:
     rows_from_screen: int
     distance: float
-    fov: float          # degrees of your view the screen fills
-    off_axis: float     # degrees to the side
-    neck: float         # degrees you look up to the top of the screen
-    visibility: float   # 0..100
+    fov: float  # degrees of your view the screen fills
+    off_axis: float  # degrees to the side
+    neck: float  # degrees you look up to the top of the screen
+    visibility: float  # 0..100
 
 
 def seat_metrics(hall: Hall, row: str, num: int) -> Metrics:
@@ -81,6 +82,7 @@ def seat_metrics(hall: Hall, row: str, num: int) -> Metrics:
 @dataclass
 class Candidate:
     """A group of seats in one row that would be booked together."""
+
     seats: list[SeatOut]
     row: str
     nums: list[int]
@@ -90,10 +92,10 @@ class Candidate:
     off_axis: float
     neck: float
     rows_from_screen: int
-    off_centre: float       # seats left (-) / right (+) of the middle of the hall
+    off_centre: float  # seats left (-) / right (+) of the middle of the hall
     total: float
     each: float
-    orphans: int            # lone empty seats this group would leave beside it
+    orphans: int  # lone empty seats this group would leave beside it
     aisle: bool
 
     @property
@@ -103,11 +105,20 @@ class Candidate:
     def utility(self, prefer_aisle: bool = False) -> float:
         """The 'best view' ranking: visibility, then the sweet spot as a tie-breaker, nudged by the real-life cases."""
         sweet = 0.15 * abs(self.fov - SWEET_SPOT_FOV) + 0.2 * self.off_axis
-        return self.visibility - sweet - ORPHAN_PENALTY * self.orphans + (AISLE_BONUS if prefer_aisle and self.aisle else 0.0)
+        return (
+            self.visibility
+            - sweet
+            - ORPHAN_PENALTY * self.orphans
+            + (AISLE_BONUS if prefer_aisle and self.aisle else 0.0)
+        )
 
 
 def candidates(
-    seats: list[SeatOut], count: int, *, allow_aisle_cross: bool = False, seat_type: str | None = None,
+    seats: list[SeatOut],
+    count: int,
+    *,
+    allow_aisle_cross: bool = False,
+    seat_type: str | None = None,
     hall: Hall | None = None,
 ) -> list[Candidate]:
     """Every group of `count` seats that are all free, in one row, side by side (and the same price
@@ -119,53 +130,73 @@ def candidates(
         by_row.setdefault(row, {})[num] = s
     out: list[Candidate] = []
     for row, line in by_row.items():
-        free = sorted(n for n, s in line.items() if s.status == "available" and (seat_type is None or s.seat_type == seat_type))
+        free = sorted(
+            n for n, s in line.items() if s.status == "available" and (seat_type is None or s.seat_type == seat_type)
+        )
         free_set = set(free)
         runs: list[list[int]] = []
         for n in free:
             if runs and n == runs[-1][-1] + 1:
                 runs[-1].append(n)
             elif runs and allow_aisle_cross and n == runs[-1][-1] + 2 and (n - 1) not in hall.present[row]:
-                runs[-1].append(n)                                   # one aisle between: still "together"
+                runs[-1].append(n)  # one aisle between: still "together"
             else:
                 runs.append([n])
         for run in runs:
             for k in range(len(run) - count + 1):
-                nums = run[k:k + count]
+                nums = run[k : k + count]
                 group = [line[n] for n in nums]
-                if len({g.seat_type for g in group}) > 1:            # never mix price tiers in one booking
+                if len({g.seat_type for g in group}) > 1:  # never mix price tiers in one booking
                     continue
-                crossed = any(b - a == 2 for a, b in zip(nums, nums[1:]))
+                crossed = any(b - a == 2 for a, b in zip(nums, nums[1:], strict=False))
                 ms = [seat_metrics(hall, row, n) for n in nums]
                 lo, hi = nums[0], nums[-1]
                 left, right = lo - 1, hi + 1
                 orphans = sum(
-                    1 for edge, beyond in ((left, left - 1), (right, right + 1))
+                    1
+                    for edge, beyond in ((left, left - 1), (right, right + 1))
                     if edge in free_set and beyond not in free_set
                 )
                 aisle = any(n >= 1 and n <= hall.n_cols and n not in hall.present[row] for n in (left, right))
                 total = round(sum(g.price for g in group), 2)
-                out.append(Candidate(
-                    seats=group, row=row, nums=nums, across_aisle=crossed,
-                    visibility=round(sum(m.visibility for m in ms) / count, 1),
-                    fov=sum(m.fov for m in ms) / count, off_axis=sum(m.off_axis for m in ms) / count,
-                    neck=sum(m.neck for m in ms) / count, rows_from_screen=ms[0].rows_from_screen,
-                    off_centre=round(sum(nums) / count - (hall.n_cols + 1) / 2, 1),
-                    total=total, each=round(total / count, 2), orphans=orphans, aisle=aisle,
-                ))
+                out.append(
+                    Candidate(
+                        seats=group,
+                        row=row,
+                        nums=nums,
+                        across_aisle=crossed,
+                        visibility=round(sum(m.visibility for m in ms) / count, 1),
+                        fov=sum(m.fov for m in ms) / count,
+                        off_axis=sum(m.off_axis for m in ms) / count,
+                        neck=sum(m.neck for m in ms) / count,
+                        rows_from_screen=ms[0].rows_from_screen,
+                        off_centre=round(sum(nums) / count - (hall.n_cols + 1) / 2, 1),
+                        total=total,
+                        each=round(total / count, 2),
+                        orphans=orphans,
+                        aisle=aisle,
+                    )
+                )
     return out
 
 
 def best_candidate(
-    seats: list[SeatOut], count: int, seat_type: str | None = None, *, centre_only: bool = False,
-    min_rows_from_screen: int = 0, max_price: float | None = None,
+    seats: list[SeatOut],
+    count: int,
+    seat_type: str | None = None,
+    *,
+    centre_only: bool = False,
+    min_rows_from_screen: int = 0,
+    max_price: float | None = None,
 ) -> Candidate | None:
     """The best-VIEW group, with the filters the movie-page seat finder offers."""
     hall = build_hall(seats)
-    band = 0.2 * hall.n_cols                                          # "centre" = the middle 40% of the row
+    band = 0.2 * hall.n_cols  # "centre" = the middle 40% of the row
     best: Candidate | None = None
     for c in candidates(seats, count, seat_type=seat_type, hall=hall):
-        if c.rows_from_screen < min_rows_from_screen or (max_price is not None and any(s.price > max_price for s in c.seats)):
+        if c.rows_from_screen < min_rows_from_screen or (
+            max_price is not None and any(s.price > max_price for s in c.seats)
+        ):
             continue
         if centre_only and abs(c.off_centre) > band:
             continue
@@ -176,9 +207,10 @@ def best_candidate(
 
 # ---- the options a person is shown ---------------------------------------------------------
 
+
 @dataclass
 class Option:
-    labels: list[str]               # why it is being offered: "Best view", "Best value", "Cheapest"
+    labels: list[str]  # why it is being offered: "Best view", "Best value", "Cheapest"
     cand: Candidate
     reasons: list[str]
     warnings: list[str]
@@ -187,8 +219,13 @@ class Option:
 
 def _reasons(c: Candidate) -> list[str]:
     out = []
-    out.append("Right in the centre" if abs(c.off_axis) <= 4 else
-               f"{round(c.off_axis)}° to the side" if c.off_axis > 12 else "Close to the centre")
+    out.append(
+        "Right in the centre"
+        if abs(c.off_axis) <= 4
+        else f"{round(c.off_axis)}° to the side"
+        if c.off_axis > 12
+        else "Close to the centre"
+    )
     if COMFORT_FOV[0] <= c.fov <= COMFORT_FOV[1]:
         out.append(f"Screen fills a comfortable {round(c.fov)}° of your view")
     elif c.fov > COMFORT_FOV[1]:
@@ -208,7 +245,11 @@ def _warnings(c: Candidate, over: float | None) -> list[str]:
     if c.across_aisle:
         w.append("Split by an aisle: you'll sit together, with a walkway between")
     if c.orphans:
-        w.append("Leaves a single empty seat beside your group" if c.orphans == 1 else "Leaves single empty seats on both sides of your group")
+        w.append(
+            "Leaves a single empty seat beside your group"
+            if c.orphans == 1
+            else "Leaves single empty seats on both sides of your group"
+        )
     if c.visibility < GOOD_ENOUGH:
         w.append("The view from here is only fair")
     if over:
@@ -217,8 +258,13 @@ def _warnings(c: Candidate, over: float | None) -> list[str]:
 
 
 def rank_options(
-    seats: list[SeatOut], count: int, *, max_total: float | None = None, max_price: float | None = None,
-    prefer_aisle: bool = False, seat_type: str | None = None,
+    seats: list[SeatOut],
+    count: int,
+    *,
+    max_total: float | None = None,
+    max_price: float | None = None,
+    prefer_aisle: bool = False,
+    seat_type: str | None = None,
 ) -> tuple[list[Option], str | None]:
     """Up to three different good choices (best view / best value / cheapest) and an optional message
     that explains an empty or compromised answer."""
@@ -235,18 +281,26 @@ def rank_options(
         return [], f"No {count} seats together are free in this show. Try fewer seats, or another show."
 
     def fits(c: Candidate) -> bool:
-        return (max_total is None or c.total <= max_total) and (max_price is None or all(s.price <= max_price for s in c.seats))
+        return (max_total is None or c.total <= max_total) and (
+            max_price is None or all(s.price <= max_price for s in c.seats)
+        )
 
     feasible = [c for c in cands if fits(c)]
-    if not feasible:                                   # nothing within the budget: show the closest, honestly
+    if not feasible:  # nothing within the budget: show the closest, honestly
+
         def over(c: Candidate) -> float:
-            return max(c.total - max_total if max_total is not None else 0.0,
-                       (max(s.price for s in c.seats) - max_price) * count if max_price is not None else 0.0)
+            return max(
+                c.total - max_total if max_total is not None else 0.0,
+                (max(s.price for s in c.seats) - max_price) * count if max_price is not None else 0.0,
+            )
+
         closest = min(cands, key=lambda c: (over(c), -c.utility(prefer_aisle)))
         gap = round(over(closest), 2)
         budget = f"₹{max_total:g}" if max_total is not None else f"₹{max_price:g} a seat"
-        return ([Option(["Closest to your budget"], closest, _reasons(closest), _warnings(closest, gap), gap)],
-                f"Nothing fits your budget of {budget} for {count} seats. The closest is ₹{closest.total:g}.")
+        return (
+            [Option(["Closest to your budget"], closest, _reasons(closest), _warnings(closest, gap), gap)],
+            f"Nothing fits your budget of {budget} for {count} seats. The closest is ₹{closest.total:g}.",
+        )
 
     best_view = max(feasible, key=lambda c: (c.utility(prefer_aisle), -c.total))
     totals = [c.total for c in feasible]
@@ -259,7 +313,7 @@ def rank_options(
     for label, c in (("Best view", best_view), ("Best value", best_value), ("Cheapest", cheapest)):
         for entry in picked:
             if [s.id for s in entry[1].seats] == [s.id for s in c.seats]:
-                entry[0].append(label)                  # the same seats win more than one way
+                entry[0].append(label)  # the same seats win more than one way
                 break
         else:
             picked.append(([label], c))

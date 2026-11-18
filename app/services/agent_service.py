@@ -16,16 +16,16 @@ SAFETY MODEL - the point of this file
   4. Bounded: max tool-call rounds per chat, a per-user rate limit (router),
      input length caps, and every message/tool call/block is audit-logged.
 """
+
 import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
 import redis
 from fastapi import HTTPException
-from datetime import datetime, timezone
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ from app.routers import showtimes as showtimes_router
 from app.schemas import HoldCreate
 
 audit = logging.getLogger("agent.audit")
+log = logging.getLogger("agent")
 
 MAX_ROUNDS = 6
 
@@ -58,18 +59,54 @@ the user themself asks for. Before holding seats, confirm which seats and the to
 user unless they already named exact seats. Be brief."""
 
 TOOLS: list[dict[str, Any]] = [
-    {"name": "search_movies", "description": "Search movies by words in the title, genre or language (e.g. 'telugu', 'comedy'), optionally only those showing in a city. Returns id, title, language, genre, rating.",
-     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "city": {"type": "string"}}}},
-    {"name": "list_showtimes", "description": "Upcoming showtimes for a movie. Give the movie_title (exactly as in search results) or its numeric movie_id, and optionally a city.",
-     "input_schema": {"type": "object", "properties": {"movie_title": {"type": "string"}, "movie_id": {"type": "integer"}, "city": {"type": "string"}}}},
-    {"name": "get_seat_map", "description": "Available seats (id, label, type, price) for a showtime.",
-     "input_schema": {"type": "object", "properties": {"showtime_id": {"type": "integer"}}, "required": ["showtime_id"]}},
-    {"name": "find_best_seats", "description": "Find N ADJACENT available seats (best viewing position), optionally of one seat type (tier). Returns seats; does not hold them.",
-     "input_schema": {"type": "object", "properties": {"showtime_id": {"type": "integer"}, "count": {"type": "integer"},
-                      "seat_type": {"type": "string"}}, "required": ["showtime_id", "count"]}},
-    {"name": "hold_seats", "description": "Place a 5-minute hold on 1-8 seats for the current user. Does NOT pay or book.",
-     "input_schema": {"type": "object", "properties": {"seat_ids": {"type": "array", "items": {"type": "integer"}}},
-                      "required": ["seat_ids"]}},
+    {
+        "name": "search_movies",
+        "description": "Search movies by words in the title, genre or language (e.g. 'telugu', 'comedy'), optionally only those showing in a city. Returns id, title, language, genre, rating.",
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "city": {"type": "string"}}},
+    },
+    {
+        "name": "list_showtimes",
+        "description": "Upcoming showtimes for a movie. Give the movie_title (exactly as in search results) or its numeric movie_id, and optionally a city.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "movie_title": {"type": "string"},
+                "movie_id": {"type": "integer"},
+                "city": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "get_seat_map",
+        "description": "Available seats (id, label, type, price) for a showtime.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"showtime_id": {"type": "integer"}},
+            "required": ["showtime_id"],
+        },
+    },
+    {
+        "name": "find_best_seats",
+        "description": "Find N ADJACENT available seats (best viewing position), optionally of one seat type (tier). Returns seats; does not hold them.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "showtime_id": {"type": "integer"},
+                "count": {"type": "integer"},
+                "seat_type": {"type": "string"},
+            },
+            "required": ["showtime_id", "count"],
+        },
+    },
+    {
+        "name": "hold_seats",
+        "description": "Place a 5-minute hold on 1-8 seats for the current user. Does NOT pay or book.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"seat_ids": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["seat_ids"],
+        },
+    },
 ]
 ALLOWED_TOOLS = {t["name"] for t in TOOLS}
 
@@ -88,8 +125,13 @@ class AnthropicClient:
             r = httpx.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": settings.anthropic_api_key, "anthropic-version": "2023-06-01"},
-                json={"model": settings.agent_model, "max_tokens": 1024, "system": system,
-                      "messages": messages, "tools": tools},
+                json={
+                    "model": settings.agent_model,
+                    "max_tokens": 1024,
+                    "system": system,
+                    "messages": messages,
+                    "tools": tools,
+                },
                 timeout=60,
             )
         except httpx.HTTPError as exc:
@@ -124,7 +166,7 @@ class GeminiClient:
 
     @staticmethod
     def to_request(system: str, messages: list[dict], tools: list[dict]) -> dict:
-        names: dict[str, str] = {}                      # tool_use id -> tool name
+        names: dict[str, str] = {}  # tool_use id -> tool name
         contents: list[dict] = []
         for m in messages:
             if isinstance(m["content"], str):
@@ -137,7 +179,7 @@ class GeminiClient:
                 elif b["type"] == "tool_use":
                     names[b["id"]] = b["name"]
                     part = {"functionCall": {"name": b["name"], "args": b.get("input") or {}}}
-                    if b.get("_sig"):                   # newer models require their "thought signature" echoed back
+                    if b.get("_sig"):  # newer models require their "thought signature" echoed back
                         part["thoughtSignature"] = b["_sig"]
                     parts.append(part)
                 elif b["type"] == "tool_result":
@@ -145,15 +187,30 @@ class GeminiClient:
                         body = json.loads(b["content"])
                     except (TypeError, ValueError):
                         body = {"result": b["content"]}
-                    parts.append({"functionResponse": {"name": names.get(b["tool_use_id"], "tool"),
-                                                       "response": body if isinstance(body, dict) else {"result": body}}})
+                    parts.append(
+                        {
+                            "functionResponse": {
+                                "name": names.get(b["tool_use_id"], "tool"),
+                                "response": body if isinstance(body, dict) else {"result": body},
+                            }
+                        }
+                    )
             contents.append({"role": "model" if m["role"] == "assistant" else "user", "parts": parts})
         return {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": contents,
-            "tools": [{"functionDeclarations": [
-                {"name": t["name"], "description": t["description"], "parameters": GeminiClient._schema(t["input_schema"])}
-                for t in tools]}],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": t["name"],
+                            "description": t["description"],
+                            "parameters": GeminiClient._schema(t["input_schema"]),
+                        }
+                        for t in tools
+                    ]
+                }
+            ],
             "generationConfig": {"maxOutputTokens": 1024},
         }
 
@@ -164,8 +221,12 @@ class GeminiClient:
         for i, part in enumerate(parts):
             if "functionCall" in part:
                 fc = part["functionCall"]
-                block = {"type": "tool_use", "id": f"call_{uuid.uuid4().hex[:12]}_{i}", "name": fc.get("name", ""),
-                         "input": fc.get("args") or {}}
+                block = {
+                    "type": "tool_use",
+                    "id": f"call_{uuid.uuid4().hex[:12]}_{i}",
+                    "name": fc.get("name", ""),
+                    "input": fc.get("args") or {},
+                }
                 if part.get("thoughtSignature"):
                     block["_sig"] = part["thoughtSignature"]
                 blocks.append(block)
@@ -177,8 +238,9 @@ class GeminiClient:
         try:
             r = httpx.post(
                 self.URL.format(model=settings.gemini_model),
-                headers={"x-goog-api-key": settings.gemini_api_key},   # a header, so the key never lands in URLs or logs
-                json=self.to_request(system, messages, tools), timeout=60,
+                headers={"x-goog-api-key": settings.gemini_api_key},  # a header, so the key never lands in URLs or logs
+                json=self.to_request(system, messages, tools),
+                timeout=60,
             )
         except httpx.HTTPError as exc:
             raise AgentUnavailable("Couldn't reach the AI service.") from exc
@@ -221,42 +283,87 @@ def run_tool(db: Session, r: redis.Redis, user: User, name: str, args: dict) -> 
             city = str(args.get("city") or "").strip().lower()
             stmt = select(Movie).order_by(Movie.title).limit(200)
             if city:
-                stmt = stmt.where(Movie.id.in_(
-                    select(Showtime.movie_id).join(Screen, Screen.id == Showtime.screen_id)
-                    .join(Theatre, Theatre.id == Screen.theatre_id)
-                    .where(func.lower(Theatre.city) == city, Showtime.starts_at > datetime.now(timezone.utc))))
+                stmt = stmt.where(
+                    Movie.id.in_(
+                        select(Showtime.movie_id)
+                        .join(Screen, Screen.id == Showtime.screen_id)
+                        .join(Theatre, Theatre.id == Screen.theatre_id)
+                        .where(func.lower(Theatre.city) == city, Showtime.starts_at > datetime.now(UTC))
+                    )
+                )
             found = [m for m in db.scalars(stmt).all() if q in f"{m.title} {m.genre} {m.language}".lower()]
-            return _wrap([{"id": m.id, "title": m.title, "language": m.language, "genre": m.genre,
-                           "rating": float(m.rating) if m.rating is not None else None} for m in found[:40]])
+            return _wrap(
+                [
+                    {
+                        "id": m.id,
+                        "title": m.title,
+                        "language": m.language,
+                        "genre": m.genre,
+                        "rating": float(m.rating) if m.rating is not None else None,
+                    }
+                    for m in found[:40]
+                ]
+            )
         if name == "list_showtimes":
-            stmt = select(Showtime).where(Showtime.starts_at > datetime.now(timezone.utc)).order_by(Showtime.starts_at).limit(25)
+            shows = (
+                select(Showtime).where(Showtime.starts_at > datetime.now(UTC)).order_by(Showtime.starts_at).limit(25)
+            )
             if args.get("movie_id") is not None:
-                stmt = stmt.where(Showtime.movie_id == int(args["movie_id"]))
+                shows = shows.where(Showtime.movie_id == int(args["movie_id"]))
             elif args.get("movie_title"):
-                ids = [m.id for m in db.scalars(select(Movie)).all()
-                       if m.title.strip().lower() == str(args["movie_title"]).strip().lower()]
-                stmt = stmt.where(Showtime.movie_id.in_(ids or [-1]))
+                ids = [
+                    m.id
+                    for m in db.scalars(select(Movie)).all()
+                    if m.title.strip().lower() == str(args["movie_title"]).strip().lower()
+                ]
+                shows = shows.where(Showtime.movie_id.in_(ids or [-1]))
             else:
                 return json.dumps({"error": "Give movie_title or movie_id."})
             city = str(args.get("city") or "").strip().lower()
             if city:
-                stmt = stmt.where(Showtime.screen_id.in_(
-                    select(Screen.id).join(Theatre, Theatre.id == Screen.theatre_id).where(func.lower(Theatre.city) == city)))
-            return _wrap([{"showtime_id": s.id, "movie": s.movie_title, "starts_at": s.starts_at.isoformat(),
-                           "theatre": s.theatre_name, "city": s.city} for s in db.scalars(stmt).all()])
+                shows = shows.where(
+                    Showtime.screen_id.in_(
+                        select(Screen.id)
+                        .join(Theatre, Theatre.id == Screen.theatre_id)
+                        .where(func.lower(Theatre.city) == city)
+                    )
+                )
+            return _wrap(
+                [
+                    {
+                        "showtime_id": s.id,
+                        "movie": s.movie_title,
+                        "starts_at": s.starts_at.isoformat(),
+                        "theatre": s.theatre_name,
+                        "city": s.city,
+                    }
+                    for s in db.scalars(shows).all()
+                ]
+            )
         if name == "get_seat_map":
             seats = showtimes_router.list_seats(int(args["showtime_id"]), db, user, r)
-            return _wrap([{"id": s.id, "label": s.label, "type": s.seat_type, "price": s.price}
-                          for s in seats if s.status == "available"][:200])
+            return _wrap(
+                [
+                    {"id": s.id, "label": s.label, "type": s.seat_type, "price": s.price}
+                    for s in seats
+                    if s.status == "available"
+                ][:200]
+            )
         if name == "find_best_seats":
-            seats = showtimes_router.best_seats(int(args["showtime_id"]), int(args["count"]),
-                                                args.get("seat_type"), db, user, r)
+            seats = showtimes_router.best_seats(
+                int(args["showtime_id"]), int(args["count"]), args.get("seat_type"), db, user, r
+            )
             return _wrap([{"id": x.id, "label": x.label, "type": x.seat_type, "price": x.price} for x in seats])
         if name == "hold_seats":
             ids = [int(i) for i in args["seat_ids"]]
             out = holds_router.create_hold(HoldCreate(seat_ids=ids), db, user, r)
-            return json.dumps({"held": out.seat_ids, "expires_in_seconds": out.ttl_seconds,
-                               "note": "Not booked or paid. The user must check out on the website."})
+            return json.dumps(
+                {
+                    "held": out.seat_ids,
+                    "expires_in_seconds": out.ttl_seconds,
+                    "note": "Not booked or paid. The user must check out on the website.",
+                }
+            )
     except HTTPException as exc:
         return json.dumps({"error": str(exc.detail)})
     except (KeyError, ValueError, TypeError) as exc:
@@ -276,9 +383,18 @@ def chat(db: Session, r: redis.Redis, user: User, llm: LLMClient, text: str) -> 
             audit.info("reply user=%s text=%s", user.id, reply[:300].replace("\n", " "))
             return reply or "Sorry, I couldn't come up with an answer."
         messages.append({"role": "assistant", "content": blocks})
-        messages.append({"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": c["id"], "content": run_tool(db, r, user, c["name"], c.get("input") or {})}
-            for c in calls
-        ]})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": c["id"],
+                        "content": run_tool(db, r, user, c["name"], c.get("input") or {}),
+                    }
+                    for c in calls
+                ],
+            }
+        )
     audit.warning("max_rounds user=%s", user.id)
     return "That took too many steps. Please try a simpler request."

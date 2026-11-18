@@ -10,6 +10,7 @@ This script only flips the `is_admin` flag, and only for whoever can run it
 in the codebase, an env var, or a default password to leak. This is how you
 make the first admin; after that, an admin can promote others the same way.
 """
+
 import sys
 from pathlib import Path
 

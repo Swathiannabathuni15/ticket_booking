@@ -8,8 +8,9 @@ run from a daily script or from the server's background loop (AUTO_SCHEDULE_DAYS
 HONEST NOTE: these showtimes are generated, not real cinema schedules. Real listings
 need an agreement with cinemas or a data provider.
 """
+
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import redis
@@ -21,10 +22,18 @@ from app.models import Booking, Movie, Screen, Showtime, ShowtimeSeat
 
 log = logging.getLogger(__name__)
 
-SLOTS = [time(10, 30), time(14, 0), time(17, 30), time(21, 0)]     # local clock times, 3.5 hours apart
-DEFAULT_PRICES = {"recliner": 600, "platinum": 350, "premium": 300, "gold": 250, "silver": 190, "standard": 180, "regular": 150}
+SLOTS = [time(10, 30), time(14, 0), time(17, 30), time(21, 0)]  # local clock times, 3.5 hours apart
+DEFAULT_PRICES = {
+    "recliner": 600,
+    "platinum": 350,
+    "premium": 300,
+    "gold": 250,
+    "silver": 190,
+    "standard": 180,
+    "regular": 150,
+}
 SCHEDULE_LOCK = "schedule:last-run"
-MIN_MOVIES_WITH_POSTERS = 6        # below this, every movie is scheduled (so a fresh install still has shows)
+MIN_MOVIES_WITH_POSTERS = 6  # below this, every movie is scheduled (so a fresh install still has shows)
 
 
 def seat_types(screen: Screen) -> set[str]:
@@ -55,7 +64,9 @@ def create_showtime_with_seats(
 
 def _prices_for(db: Session, screen: Screen) -> dict:
     """Same prices as the screen's latest showtime, else defaults by seat type."""
-    last = db.scalar(select(Showtime.prices).where(Showtime.screen_id == screen.id).order_by(Showtime.id.desc()).limit(1))
+    last = db.scalar(
+        select(Showtime.prices).where(Showtime.screen_id == screen.id).order_by(Showtime.id.desc()).limit(1)
+    )
     if last and seat_types(screen) <= last.keys():
         return last
     return {t: DEFAULT_PRICES.get(t, 150) for t in seat_types(screen)}
@@ -65,7 +76,7 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
     """Create the missing showtimes for today and the next `days_ahead` days. Returns how many
     were created. Movies rotate across screens and slots; a movie is never shown before its
     release date; a slot is skipped if that screen already has a show within 3 hours of it."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     tz = ZoneInfo(settings.display_timezone)
     today = now.astimezone(tz).date()
     screens = db.scalars(select(Screen).order_by(Screen.id)).all()
@@ -74,8 +85,11 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
         return 0
     window_end = datetime.combine(today + timedelta(days=days_ahead + 1), time(0), tzinfo=tz)
     existing: dict[int, list[datetime]] = {}
-    for sid, at in db.execute(select(Showtime.screen_id, Showtime.starts_at).where(
-            Showtime.starts_at >= now - timedelta(hours=4), Showtime.starts_at < window_end)):
+    for sid, at in db.execute(
+        select(Showtime.screen_id, Showtime.starts_at).where(
+            Showtime.starts_at >= now - timedelta(hours=4), Showtime.starts_at < window_end
+        )
+    ):
         existing.setdefault(sid, []).append(at)
 
     created = 0
@@ -108,18 +122,19 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
     return created
 
 
-def clear_unbooked_future_showtimes(db: Session, now: datetime | None = None, *, dry_run: bool = True,
-                                    buffer_hours: int = 1) -> int:
+def clear_unbooked_future_showtimes(
+    db: Session, now: datetime | None = None, *, dry_run: bool = True, buffer_hours: int = 1
+) -> int:
     """Remove showtimes that have not started (and do not start within `buffer_hours`) and that nobody has
     booked, with their seats, so ensure_schedule can restock them with a better movie mix. A showtime with
     ANY booking (even a cancelled one) is kept. Returns how many were (or, in a dry run, would be) removed."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     booked = select(Booking.id).where(Booking.showtime_id == Showtime.id).exists()
     ids = list(db.scalars(select(Showtime.id).where(Showtime.starts_at > now + timedelta(hours=buffer_hours), ~booked)))
     if dry_run or not ids:
         return len(ids)
-    for i in range(0, len(ids), 500):                    # in chunks: each showtime owns hundreds of seat rows
-        chunk = ids[i:i + 500]
+    for i in range(0, len(ids), 500):  # in chunks: each showtime owns hundreds of seat rows
+        chunk = ids[i : i + 500]
         db.execute(delete(ShowtimeSeat).where(ShowtimeSeat.showtime_id.in_(chunk)))
         db.execute(delete(Showtime).where(Showtime.id.in_(chunk)))
         db.commit()

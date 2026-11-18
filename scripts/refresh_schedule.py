@@ -8,6 +8,7 @@ even a cancelled one, is kept), then creates fresh ones (scripts/schedule_showti
 movies that have posters. Use it after importing new movies, so they actually get shows.
 These showtimes are generated demo data. Talks to the database directly (same DATABASE_URL as the app).
 """
+
 import argparse
 import sys
 

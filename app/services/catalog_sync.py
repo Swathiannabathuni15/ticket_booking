@@ -4,6 +4,7 @@ A movie in the file is matched to one in the database by title and language
 (ignoring case and punctuation). A match is UPDATED (never overwriting something
 already known with something blank); no match means a new movie is created.
 """
+
 import re
 from datetime import date
 
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Movie
 
-PLACEHOLDER_MINUTES = 150          # what the Telugu seed used when the real runtime was unknown
+PLACEHOLDER_MINUTES = 150  # what the Telugu seed used when the real runtime was unknown
 
 
 def _norm(title: str) -> str:
@@ -32,9 +33,15 @@ def upsert_movies(db: Session, entries: list[dict], *, posters_only: bool = Fals
         if m is None:
             if posters_only and not e.get("poster_url"):
                 continue
-            m = Movie(title=e["title"], language=e.get("language", "English"), genre=e.get("genre", ""),
-                      duration_minutes=e.get("duration_minutes") or PLACEHOLDER_MINUTES, poster_url=e.get("poster_url"),
-                      rating=e.get("rating"), release_date=release)
+            m = Movie(
+                title=e["title"],
+                language=e.get("language", "English"),
+                genre=e.get("genre", ""),
+                duration_minutes=e.get("duration_minutes") or PLACEHOLDER_MINUTES,
+                poster_url=e.get("poster_url"),
+                rating=e.get("rating"),
+                release_date=release,
+            )
             db.add(m)
             existing[key] = m
             created += 1
@@ -49,7 +56,7 @@ def upsert_movies(db: Session, entries: list[dict], *, posters_only: bool = Fals
         if e.get("rating") is not None and m.rating is None:
             m.rating, changed = e["rating"], True
         if e.get("duration_minutes") and m.duration_minutes == PLACEHOLDER_MINUTES:
-            m.duration_minutes, changed = e["duration_minutes"], True   # only replaces the placeholder
+            m.duration_minutes, changed = e["duration_minutes"], True  # only replaces the placeholder
         updated += changed
     db.commit()
     return {"created": created, "updated": updated}

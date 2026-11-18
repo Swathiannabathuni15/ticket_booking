@@ -1,4 +1,5 @@
 """App settings, read from environment variables or a .env file."""
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     background_jobs: str = "off"
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ticketdb"
-    jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"
+    jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"  # noqa: S105 (dev default; production refuses it)
     jwt_algorithm: str = "HS256"
     # Stay signed in: 30 days, renewed every time the site is opened (POST /auth/refresh),
     # so people who use the site are not asked to sign in again.
@@ -54,7 +55,7 @@ class Settings(BaseSettings):
     # Google Gemini works too. "auto" uses Gemini if GEMINI_API_KEY is set, else Anthropic.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    agent_provider: str = "auto"      # auto | gemini | anthropic
+    agent_provider: str = "auto"  # auto | gemini | anthropic
     agent_model: str = "claude-haiku-5-5"
     rate_limit_agent_per_window: int = 10
 
@@ -63,13 +64,13 @@ class Settings(BaseSettings):
     otp_dev_mode: bool = True
     # How codes are really delivered. With nothing configured (and otp_dev_mode on) the
     # code is shown on screen - demo only. See app/services/otp_delivery.py.
-    otp_sms_provider: str = "none"        # none | twilio | msg91
+    otp_sms_provider: str = "none"  # none | twilio | msg91
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
-    twilio_from: str = ""                 # a Twilio number like +1555..., or a Messaging Service SID (MG...)
+    twilio_from: str = ""  # a Twilio number like +1555..., or a Messaging Service SID (MG...)
     msg91_auth_key: str = ""
-    msg91_template_id: str = ""           # an approved OTP template (India requires DLT approval)
-    smtp_host: str = ""                   # e.g. smtp.gmail.com (use an "app password", not your real password)
+    msg91_template_id: str = ""  # an approved OTP template (India requires DLT approval)
+    smtp_host: str = ""  # e.g. smtp.gmail.com (use an "app password", not your real password)
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
@@ -80,11 +81,11 @@ class Settings(BaseSettings):
     otp_max_attempts: int = 5
 
     # Rate limits are per IDENTITY (email, phone, or signed-in user id), not per IP address.
-    rate_limit_user_per_second: int = 20      # the "gateway": any signed-in user, all endpoints
+    rate_limit_user_per_second: int = 20  # the "gateway": any signed-in user, all endpoints
     rate_limit_payment_per_window: int = 10
 
     # Simulated bank + its signed webhooks (see app/services/fake_gateway.py)
-    payment_webhook_secret: str = "dev-webhook-secret-change-me-0123456789"
+    payment_webhook_secret: str = "dev-webhook-secret-change-me-0123456789"  # noqa: S105 (dev default; production refuses it)
     payment_webhook_url: str = "http://127.0.0.1:8000/webhooks/payments"
     payment_webhook_tolerance_seconds: int = 300
     gateway_webhook_delay_seconds: float = 2.0
@@ -120,7 +121,7 @@ class Settings(BaseSettings):
         """Hosts hand out postgres:// or postgresql:// URLs; we use the psycopg 3 driver."""
         for prefix in ("postgres://", "postgresql://"):
             if v.startswith(prefix):
-                return "postgresql+psycopg://" + v[len(prefix):]
+                return "postgresql+psycopg://" + v[len(prefix) :]
         return v
 
     def production_problems(self) -> list[str]:
@@ -131,15 +132,23 @@ class Settings(BaseSettings):
         if "change-me" in self.payment_webhook_secret or self.payment_webhook_secret.startswith("dev-"):
             problems.append("PAYMENT_WEBHOOK_SECRET is a development value. Set a long random one.")
         if self.gateway_allow_test_methods:
-            problems.append("GATEWAY_ALLOW_TEST_METHODS is on: the browser chooses which test 'card' works. "
-                            "Set GATEWAY_ALLOW_TEST_METHODS=false (required before connecting a real bank).")
+            problems.append(
+                "GATEWAY_ALLOW_TEST_METHODS is on: the browser chooses which test 'card' works. "
+                "Set GATEWAY_ALLOW_TEST_METHODS=false (required before connecting a real bank)."
+            )
         if self.otp_dev_mode:
-            problems.append("OTP_DEV_MODE is on: sign-in codes would be shown on screen to anyone. Set OTP_DEV_MODE=false.")
+            problems.append(
+                "OTP_DEV_MODE is on: sign-in codes would be shown on screen to anyone. Set OTP_DEV_MODE=false."
+            )
         if self.cors_origin_regex and "localhost" in self.cors_origin_regex:
-            problems.append("CORS_ORIGIN_REGEX still allows localhost and home networks. Set CORS_ORIGIN_REGEX= (empty) and list your website in CORS_ORIGINS.")
+            problems.append(
+                "CORS_ORIGIN_REGEX still allows localhost and home networks. Set CORS_ORIGIN_REGEX= (empty) and list your website in CORS_ORIGINS."
+            )
         if not self.public_base_url.startswith("https://"):
-            problems.append("PUBLIC_BASE_URL is not an https:// address, so the QR codes on tickets would point nowhere useful. "
-                            "Set it to your website, e.g. PUBLIC_BASE_URL=https://your-website.example.com")
+            problems.append(
+                "PUBLIC_BASE_URL is not an https:// address, so the QR codes on tickets would point nowhere useful. "
+                "Set it to your website, e.g. PUBLIC_BASE_URL=https://your-website.example.com"
+            )
         return problems
 
 

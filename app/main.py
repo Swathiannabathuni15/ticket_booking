@@ -1,13 +1,12 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError as PoolTimeout
-from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.gateway_middleware import PerUserRateLimit
-
 from app.routers import admin, agent, auth, bookings, catalog, finder, holds, payments, push, showtimes, splits, tickets
 
 
@@ -22,6 +21,7 @@ async def lifespan(_app: FastAPI):
             raise RuntimeError("Refusing to start in production:\n - " + "\n - ".join(problems))
     if settings.background_jobs == "inprocess":
         from app.jobs import inprocess
+
         inprocess.start()
     yield
 
@@ -55,9 +55,7 @@ app.include_router(tickets.router)
 def _db_pool_exhausted(_req: Request, _exc: PoolTimeout):
     """All DB connections busy for longer than the pool timeout: we are
     overloaded. Say so (503 + Retry-After) instead of an opaque 500."""
-    return JSONResponse(
-        {"detail": "Server is busy, try again shortly"}, status_code=503, headers={"Retry-After": "2"}
-    )
+    return JSONResponse({"detail": "Server is busy, try again shortly"}, status_code=503, headers={"Retry-After": "2"})
 
 
 @app.get("/config", tags=["meta"])

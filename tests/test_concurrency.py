@@ -1,6 +1,7 @@
 """The tests that PROVE the booking is safe under pressure."""
+
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -15,13 +16,13 @@ N_USERS = 200
 
 def _make_event_with_one_seat(db) -> int:
     movie = Movie(title="Last Seat", duration_minutes=90)
-    theatre_screen = Screen(
-        theatre_id=_make_theatre(db), name="Screen 1", layout=[{"row": "A", "seats": ["standard"]}]
-    )
+    theatre_screen = Screen(theatre_id=_make_theatre(db), name="Screen 1", layout=[{"row": "A", "seats": ["standard"]}])
     db.add_all([movie, theatre_screen])
     db.flush()
     showtime = Showtime(
-        movie_id=movie.id, screen_id=theatre_screen.id, starts_at=datetime.now(timezone.utc),
+        movie_id=movie.id,
+        screen_id=theatre_screen.id,
+        starts_at=datetime.now(UTC),
         prices={"standard": 10},
     )
     db.add(showtime)
@@ -68,9 +69,9 @@ def test_200_users_fight_for_one_seat_exactly_one_wins(db):
     # to prove the race is won by exactly one person; paying is a separate step
     # (see test_payments.py), covered by Layer 2 (the index) just the same.
     active = db.scalar(
-        select(func.count()).select_from(BookingSeat).where(
-            BookingSeat.showtime_seat_id == seat_id, BookingSeat.status.in_(ACTIVE_STATUSES)
-        )
+        select(func.count())
+        .select_from(BookingSeat)
+        .where(BookingSeat.showtime_seat_id == seat_id, BookingSeat.status.in_(ACTIVE_STATUSES))
     )
     assert active == 1
 

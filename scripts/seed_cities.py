@@ -9,6 +9,7 @@ future release date so the "Coming soon" row has something in it.
 
 Talks to the database directly (same DATABASE_URL as the app). Theatre names are made up.
 """
+
 import sys
 from datetime import date, timedelta
 
@@ -20,13 +21,27 @@ from app.models import Movie, Screen, Theatre  # noqa: E402
 from app.services import halls  # noqa: E402
 from app.services.schedule_service import ensure_schedule  # noqa: E402
 
-CITIES = ["Mumbai", "Delhi-NCR", "Bengaluru", "Hyderabad", "Chandigarh", "Ahmedabad", "Pune", "Chennai", "Kolkata", "Kochi"]
+CITIES = [
+    "Mumbai",
+    "Delhi-NCR",
+    "Bengaluru",
+    "Hyderabad",
+    "Chandigarh",
+    "Ahmedabad",
+    "Pune",
+    "Chennai",
+    "Kolkata",
+    "Kochi",
+]
 THEATRES = [  # (name, [(screen name, layout builder)])
     ("Orion Cinemas", [("Screen 1 (Large)", halls.large_hall), ("Screen 2", halls.medium_hall)]),
     ("Starlight Multiplex", [("Screen 1", halls.medium_hall), ("Recliner Lounge", halls.lounge_hall)]),
     ("Majestic Screens", [("Screen 1", halls.large_hall)]),
 ]
-COMING_SOON = [("Moonlit Harbour", 128, "Drama/Mystery", "Hindi", 9), ("The Clockmaker's Daughter", 112, "Fantasy/Family", "English", 16)]
+COMING_SOON = [
+    ("Moonlit Harbour", 128, "Drama/Mystery", "Hindi", 9),
+    ("The Clockmaker's Daughter", 112, "Fantasy/Family", "English", 16),
+]
 
 with SessionLocal() as db:
     added = 0
@@ -44,8 +59,15 @@ with SessionLocal() as db:
                     db.add(Screen(theatre_id=theatre.id, name=screen_name, layout=build()))
     for title, minutes, genre, language, days in COMING_SOON:
         if db.scalar(select(Movie.id).where(Movie.title == title)) is None:
-            db.add(Movie(title=title, duration_minutes=minutes, genre=genre, language=language,
-                         release_date=date.today() + timedelta(days=days)))
+            db.add(
+                Movie(
+                    title=title,
+                    duration_minutes=minutes,
+                    genre=genre,
+                    language=language,
+                    release_date=date.today() + timedelta(days=days),
+                )
+            )
     db.commit()
     print(f"{added} new theatres. Creating showtimes (this can take a minute)...")
     print(f"Created {ensure_schedule(db, 4)} showtimes.")

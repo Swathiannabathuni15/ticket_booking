@@ -36,7 +36,9 @@ FAIL CLOSED
     503. The cost is honest: seat holds (and therefore booking) are
     unavailable while Redis is down.
 """
+
 import uuid
+from collections.abc import Sequence
 
 import redis
 
@@ -131,7 +133,7 @@ def has_valid_holds(r: redis.Redis, seat_ids: list[int], user_id: int) -> bool:
     return all(has_valid_hold(r, sid, user_id) for sid in seat_ids)
 
 
-def seats_held_by_user(r: redis.Redis, seat_ids: list[int], user_id: int) -> set[int]:
+def seats_held_by_user(r: redis.Redis, seat_ids: Sequence[int], user_id: int) -> set[int]:
     """Which of `seat_ids` does `user_id` currently hold? Used to enforce a
     cap on cumulative holds per showtime (see routers/holds.py) - the
     per-request limit alone doesn't stop someone from calling /holds several
@@ -142,7 +144,7 @@ def seats_held_by_user(r: redis.Redis, seat_ids: list[int], user_id: int) -> set
         values = r.mget(_key(sid) for sid in seat_ids)
     except redis.exceptions.RedisError as exc:
         raise HoldUnavailable() from exc
-    return {sid for sid, value in zip(seat_ids, values) if _owner(value) == str(user_id)}
+    return {sid for sid, value in zip(seat_ids, values, strict=False) if _owner(value) == str(user_id)}
 
 
 def release_hold(r: redis.Redis, seat_id: int, user_id: int) -> bool:

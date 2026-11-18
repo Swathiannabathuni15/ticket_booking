@@ -4,8 +4,9 @@ Reads limits from `settings` on every call (not at import time) so tests can
 tighten them per-test with `settings.rate_limit_x = N` and see the new value
 take effect immediately.
 """
-from fastapi import Depends, HTTPException, status
+
 import redis
+from fastapi import Depends, HTTPException, status
 
 from app.config import settings
 from app.deps import get_current_user
@@ -59,9 +60,7 @@ def limit_payments_per_user(user: User = Depends(get_current_user), r: redis.Red
 
 def limit_holds_per_user(user: User = Depends(get_current_user), r: redis.Redis = Depends(get_redis)) -> None:
     try:
-        rate_limit.check(
-            r, f"hold:{user.id}", settings.rate_limit_hold_per_window, settings.rate_limit_window_seconds
-        )
+        rate_limit.check(r, f"hold:{user.id}", settings.rate_limit_hold_per_window, settings.rate_limit_window_seconds)
     except rate_limit.RateLimitExceeded as exc:
         _too_many_requests(exc.retry_after_seconds)
 

@@ -1,7 +1,8 @@
 """Movies, theatres and screens: admin-created catalogue data. Showtimes
 (which actually generate bookable seats) live in app/routers/showtimes.py.
 """
-from datetime import date, datetime, timezone
+
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -38,7 +39,9 @@ def update_movie(
 
 @router.get("/movies", response_model=list[MovieOut])
 def list_movies(
-    limit: int = 20, offset: int = 0, city: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    city: str | None = None,
     status: str | None = Query(None, pattern="^(now_showing|coming_soon)$"),
     db: Session = Depends(get_db),
 ):
@@ -47,7 +50,11 @@ def list_movies(
     only those (in every city: they have no shows yet)."""
     limit = max(1, min(limit, 100))
     today = date.today()
-    stmt = select(Movie).order_by(Movie.release_date, Movie.title) if status == "coming_soon" else select(Movie).order_by(Movie.title)
+    stmt = (
+        select(Movie).order_by(Movie.release_date, Movie.title)
+        if status == "coming_soon"
+        else select(Movie).order_by(Movie.title)
+    )
     stmt = stmt.limit(limit).offset(max(offset, 0))
     if status == "coming_soon":
         stmt = stmt.where(Movie.release_date > today)
@@ -55,11 +62,14 @@ def list_movies(
     if status == "now_showing":
         stmt = stmt.where((Movie.release_date.is_(None)) | (Movie.release_date <= today))
     if city:
-        stmt = stmt.where(Movie.id.in_(
-            select(Showtime.movie_id).join(Screen, Screen.id == Showtime.screen_id)
-            .join(Theatre, Theatre.id == Screen.theatre_id)
-            .where(func.lower(Theatre.city) == city.lower(), Showtime.starts_at > datetime.now(timezone.utc))
-        ))
+        stmt = stmt.where(
+            Movie.id.in_(
+                select(Showtime.movie_id)
+                .join(Screen, Screen.id == Showtime.screen_id)
+                .join(Theatre, Theatre.id == Screen.theatre_id)
+                .where(func.lower(Theatre.city) == city.lower(), Showtime.starts_at > datetime.now(UTC))
+            )
+        )
     return db.scalars(stmt).all()
 
 
