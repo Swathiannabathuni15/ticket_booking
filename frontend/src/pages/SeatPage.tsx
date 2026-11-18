@@ -171,6 +171,7 @@ export default function SeatPage() {
       <div className="show-head">
         <h1>{showtime?.movie_title ?? "Choose your seats"}</h1>
         {showtime && <p className="muted">{showtime.theatre_name} - {showtime.screen_name} | {when(showtime.starts_at)}</p>}
+        {showtime?.price_note && <span className="price-note" title="These prices include this show's pricing">🏷️ {showtime.price_note}</span>}
         {qty !== null && <button className="chip" onClick={() => { setPendingQty(qty); setQty(null); setSelected(new Set()); }}>{qty} {qty === 1 ? "Ticket" : "Tickets"} - change</button>}
         {qty !== null && <button className="chip" onClick={() => setPicksOpen(true)}>✨ Best available</button>}
       </div>

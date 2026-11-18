@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Booking, Movie, Screen, Showtime, ShowtimeSeat
+from app.services import pricing_service
 
 log = logging.getLogger(__name__)
 
@@ -48,11 +49,16 @@ def create_showtime_with_seats(
     missing = seat_types(screen) - prices.keys()
     if missing:
         raise ValueError(f"Missing a price for seat type(s): {sorted(missing)}")
-    showtime = Showtime(movie_id=movie_id, screen_id=screen.id, starts_at=starts_at, prices=prices)
+    priced = pricing_service.price_for(db, starts_at, prices)  # weekend / evening rules
+    showtime = Showtime(
+        movie_id=movie_id, screen_id=screen.id, starts_at=starts_at, prices=prices, price_note=priced.note
+    )
     db.add(showtime)
     db.flush()
     db.add_all(
-        ShowtimeSeat(showtime_id=showtime.id, row_label=row["row"], seat_number=col, seat_type=kind, price=prices[kind])
+        ShowtimeSeat(
+            showtime_id=showtime.id, row_label=row["row"], seat_number=col, seat_type=kind, price=priced.prices[kind]
+        )
         for row in screen.layout
         for col, kind in enumerate(row["seats"], start=1)
         if kind is not None  # None = aisle gap, no seat there
@@ -62,7 +68,7 @@ def create_showtime_with_seats(
     return showtime
 
 
-def _prices_for(db: Session, screen: Screen) -> dict:
+def prices_for(db: Session, screen: Screen) -> dict:
     """Same prices as the screen's latest showtime, else defaults by seat type."""
     last = db.scalar(
         select(Showtime.prices).where(Showtime.screen_id == screen.id).order_by(Showtime.id.desc()).limit(1)
@@ -112,7 +118,7 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
                 if any(abs((at - starts).total_seconds()) < 3 * 3600 for at in existing.get(screen.id, [])):
                     continue
                 movie = pool[(si * 5 + k * 2 + d) % len(pool)]
-                prices = prices or _prices_for(db, screen)
+                prices = prices or prices_for(db, screen)
                 create_showtime_with_seats(db, movie.id, screen, starts, prices, commit=False)
                 existing.setdefault(screen.id, []).append(starts)
                 created += 1

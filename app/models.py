@@ -125,7 +125,9 @@ class Showtime(Base):
     movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"), index=True)
     screen_id: Mapped[int] = mapped_column(ForeignKey("screens.id"), index=True)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    prices: Mapped[dict] = mapped_column(JSON)
+    prices: Mapped[dict] = mapped_column(JSON)  # the BASE prices; seats carry the final ones
+    # Which pricing rules changed the seat prices, e.g. "Weekend +20%". None = base prices.
+    price_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     movie: Mapped[Movie] = relationship()
@@ -439,3 +441,23 @@ class ReminderSent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), unique=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PricingRule(Base):
+    """A price change for shows at certain times, e.g. "Weekend +20%" or "Morning -15%".
+    Rules are applied when a showtime is CREATED (app/services/pricing_service.py), so a price a
+    customer has seen never changes under them. Several matching rules add up."""
+
+    __tablename__ = "pricing_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    # Days of the week it applies on, Monday=0 .. Sunday=6. Empty = every day.
+    days: Mapped[list] = mapped_column(JSON, default=list)
+    # Local start-time window in minutes after midnight [start, end). None = any time.
+    start_minute: Mapped[int | None] = mapped_column(nullable=True)
+    end_minute: Mapped[int | None] = mapped_column(nullable=True)
+    seat_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # None = every seat type
+    percent: Mapped[int] = mapped_column()  # +20 = 20% dearer, -15 = 15% cheaper
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -152,6 +152,7 @@ class ShowtimeOut(BaseModel):
     theatre_name: str
     theatre_id: int
     city: str
+    price_note: str | None = None  # e.g. "Weekend +20%"
 
 
 class SeatOut(BaseModel):
@@ -344,3 +345,96 @@ class CheckInOut(BaseModel):
     result: str  # admitted | already_used | cancelled | too_early | expired | invalid
     message: str
     ticket: TicketPublicOut | None = None
+
+
+class PricingRuleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    days: list[int] = Field(default_factory=list)  # Monday=0 .. Sunday=6; empty = every day
+    start_minute: int | None = Field(default=None, ge=0, le=1440)
+    end_minute: int | None = Field(default=None, ge=0, le=1440)
+    seat_type: str | None = Field(default=None, max_length=30)
+    percent: int = Field(ge=-90, le=200)
+    active: bool = True
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v: list[int]) -> list[int]:
+        if any(d not in range(7) for d in v):
+            raise ValueError("days are 0 (Monday) to 6 (Sunday)")
+        return sorted(set(v))
+
+    @field_validator("seat_type")
+    @classmethod
+    def _seat_type(cls, v: str | None) -> str | None:
+        return v.strip().lower() or None if v else None
+
+    @model_validator(mode="after")
+    def _window(self):
+        if (self.start_minute is None) != (self.end_minute is None):
+            raise ValueError("give both a start and an end time, or neither")
+        if self.start_minute is not None and self.start_minute == self.end_minute:
+            raise ValueError("the start and end time are the same")
+        if self.percent == 0:
+            raise ValueError("a 0% change does nothing")
+        return self
+
+
+class PricingRuleOut(PricingRuleIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    summary: str = ""
+
+
+class PricePreviewOut(BaseModel):
+    base: dict[str, float]
+    final: dict[str, float]
+    note: str | None
+
+
+class DayStat(BaseModel):
+    date: date
+    bookings: int
+    tickets: int
+    revenue_cents: int
+
+
+class ShowStat(BaseModel):
+    showtime_id: int
+    starts_at: datetime
+    movie_title: str
+    theatre_name: str
+    city: str
+    screen_name: str
+    seats_total: int
+    seats_sold: int
+    occupancy_percent: float
+    revenue_cents: int
+
+
+class MovieStat(BaseModel):
+    title: str
+    tickets: int
+    revenue_cents: int
+
+
+class StatTotals(BaseModel):
+    revenue_cents: int
+    bookings: int
+    tickets: int
+    avg_ticket_cents: int
+    occupancy_percent: float
+    shows: int
+    started: int  # bookings started in the window
+    abandoned: int  # ...that ended cancelled or expired
+    pending: int  # ...still waiting for payment
+
+
+class DashboardOut(BaseModel):
+    days: int
+    from_date: date
+    to_date: date
+    timezone: str
+    totals: StatTotals
+    per_day: list[DayStat]
+    shows: list[ShowStat]
+    top_movies: list[MovieStat]

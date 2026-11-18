@@ -126,6 +126,7 @@ export type Screen = { id: number; theatre_id: number; name: string; layout: unk
 export type Showtime = {
   id: number; movie_id: number; screen_id: number; starts_at: string;
   movie_title: string; screen_name: string; theatre_name: string; theatre_id: number; city: string;
+  price_note?: string | null;   // e.g. "Weekend +20%"
 };
 export type SeatStatus = "available" | "held" | "held_by_me" | "booked";
 export type Seat = {
@@ -208,6 +209,26 @@ export function ticketCodeFrom(text: string): string | null {
   return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
 }
 
+export type DayStat = { date: string; bookings: number; tickets: number; revenue_cents: number };
+export type ShowStat = {
+  showtime_id: number; starts_at: string; movie_title: string; theatre_name: string; city: string; screen_name: string;
+  seats_total: number; seats_sold: number; occupancy_percent: number; revenue_cents: number;
+};
+export type Dashboard = {
+  days: number; from_date: string; to_date: string; timezone: string;
+  totals: {
+    revenue_cents: number; bookings: number; tickets: number; avg_ticket_cents: number; occupancy_percent: number;
+    shows: number; started: number; abandoned: number; pending: number;
+  };
+  per_day: DayStat[]; shows: ShowStat[]; top_movies: { title: string; tickets: number; revenue_cents: number }[];
+};
+export type PricingRuleIn = {
+  name: string; days: number[]; start_minute: number | null; end_minute: number | null;
+  seat_type: string | null; percent: number; active: boolean;
+};
+export type PricingRule = PricingRuleIn & { id: number; summary: string };
+export type PricePreview = { base: Record<string, number>; final: Record<string, number>; note: string | null };
+
 // ---- endpoints ----
 export const api = {
   signup: (email: string, password: string) =>
@@ -283,6 +304,13 @@ export const api = {
   publicTicket: (code: string) => request<TicketPublic>("GET", `/tickets/${encodeURIComponent(code)}`, { auth: false }),
   checkIn: (code: string) => request<CheckIn>("POST", `/tickets/${encodeURIComponent(code)}/check-in`),
   // admin
+  dashboard: (days: number) => request<Dashboard>("GET", `/admin/dashboard?days=${days}`),
+  pricingRules: () => request<PricingRule[]>("GET", "/admin/pricing-rules"),
+  createPricingRule: (body: PricingRuleIn) => request<PricingRule>("POST", "/admin/pricing-rules", { body }),
+  updatePricingRule: (id: number, body: PricingRuleIn) => request<PricingRule>("PUT", `/admin/pricing-rules/${id}`, { body }),
+  deletePricingRule: (id: number) => request<void>("DELETE", `/admin/pricing-rules/${id}`),
+  pricePreview: (screenId: number, startsAt: string) =>
+    request<PricePreview>("GET", `/admin/pricing-rules/preview?screen_id=${screenId}&starts_at=${encodeURIComponent(startsAt)}`),
   adminBookings: (status?: string) =>
     request<Booking[]>("GET", `/admin/bookings?limit=200${status ? `&status=${status}` : ""}`),
   screens: () => request<Screen[]>("GET", "/screens", { auth: false }),

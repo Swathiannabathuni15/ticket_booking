@@ -180,3 +180,21 @@ describe("safeInternalPath (where to go after signing in)", () => {
       expect(safeInternalPath(bad)).toBeNull();
   });
 });
+
+import { niceMax } from "./pages/admin/Dashboard";
+import { toMinutes } from "./pages/admin/Pricing";
+
+describe("dashboard axis and pricing helpers", () => {
+  it("rounds the axis up to a readable number", () => {
+    expect(niceMax(0)).toBe(1);
+    expect(niceMax(7)).toBe(10);
+    expect(niceMax(1234)).toBe(2000);
+    expect(niceMax(30000)).toBe(50000);
+    expect(niceMax(250)).toBe(250);
+  });
+  it("turns a time box into minutes after midnight", () => {
+    expect(toMinutes("18:30")).toBe(1110);
+    expect(toMinutes("00:00")).toBe(0);
+    expect(toMinutes("")).toBeNull();
+  });
+});

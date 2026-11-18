@@ -38,7 +38,7 @@ def _schema():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, "
+                "TRUNCATE pricing_rules, reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, "
                 "bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, screens, theatres, "
                 "movies, users RESTART IDENTITY CASCADE"
             )
@@ -52,7 +52,7 @@ def _clean_tables():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, "
+                "TRUNCATE pricing_rules, reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, "
                 "screens, theatres, movies, users RESTART IDENTITY CASCADE"
             )
         )
@@ -138,7 +138,13 @@ def admin_headers(client: TestClient, email: str = "admin@example.com") -> dict:
     return headers
 
 
-def make_showtime_with_seats(client: TestClient, rows: int = 1, seats_per_row: int = 1, price: float = 10.0) -> dict:
+def make_showtime_with_seats(
+    client: TestClient,
+    rows: int = 1,
+    seats_per_row: int = 1,
+    price: float = 10.0,
+    starts_at: str = "2030-01-01T18:00:00",
+) -> dict:
     """Admin-creates a movie, theatre, screen and showtime in one call, and
     returns the showtime id plus its seats (as returned by GET
     /showtimes/{id}/seats) - the fixture every booking/hold/payment test
@@ -163,7 +169,7 @@ def make_showtime_with_seats(client: TestClient, rows: int = 1, seats_per_row: i
         json={
             "movie_id": movie_id,
             "screen_id": screen_id,
-            "starts_at": "2030-01-01T18:00:00",
+            "starts_at": starts_at,
             "prices": {"standard": price},
         },
         headers=headers,
