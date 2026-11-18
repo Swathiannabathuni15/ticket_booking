@@ -13,17 +13,18 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import redis
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Movie, Screen, Showtime, ShowtimeSeat
+from app.models import Booking, Movie, Screen, Showtime, ShowtimeSeat
 
 log = logging.getLogger(__name__)
 
 SLOTS = [time(10, 30), time(14, 0), time(17, 30), time(21, 0)]     # local clock times, 3.5 hours apart
 DEFAULT_PRICES = {"recliner": 600, "platinum": 350, "premium": 300, "gold": 250, "silver": 190, "standard": 180, "regular": 150}
 SCHEDULE_LOCK = "schedule:last-run"
+MIN_MOVIES_WITH_POSTERS = 6        # below this, every movie is scheduled (so a fresh install still has shows)
 
 
 def seat_types(screen: Screen) -> set[str]:
@@ -83,6 +84,11 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
         for d in range(days_ahead + 1):
             day = today + timedelta(days=d)
             pool = [m for m in movies if m.release_date is None or m.release_date <= day]
+            # Once there are enough movies WITH artwork, schedule only those: a listing full of plain
+            # generated posters looks unfinished.
+            with_poster = [m for m in pool if m.poster_url]
+            if len(with_poster) >= MIN_MOVIES_WITH_POSTERS:
+                pool = with_poster
             if not pool:
                 continue
             for k, slot in enumerate(SLOTS):
@@ -100,6 +106,24 @@ def ensure_schedule(db: Session, days_ahead: int = 4, now: datetime | None = Non
     if created:
         log.info("schedule: created %s showtimes", created)
     return created
+
+
+def clear_unbooked_future_showtimes(db: Session, now: datetime | None = None, *, dry_run: bool = True,
+                                    buffer_hours: int = 1) -> int:
+    """Remove showtimes that have not started (and do not start within `buffer_hours`) and that nobody has
+    booked, with their seats, so ensure_schedule can restock them with a better movie mix. A showtime with
+    ANY booking (even a cancelled one) is kept. Returns how many were (or, in a dry run, would be) removed."""
+    now = now or datetime.now(timezone.utc)
+    booked = select(Booking.id).where(Booking.showtime_id == Showtime.id).exists()
+    ids = list(db.scalars(select(Showtime.id).where(Showtime.starts_at > now + timedelta(hours=buffer_hours), ~booked)))
+    if dry_run or not ids:
+        return len(ids)
+    for i in range(0, len(ids), 500):                    # in chunks: each showtime owns hundreds of seat rows
+        chunk = ids[i:i + 500]
+        db.execute(delete(ShowtimeSeat).where(ShowtimeSeat.showtime_id.in_(chunk)))
+        db.execute(delete(Showtime).where(Showtime.id.in_(chunk)))
+        db.commit()
+    return len(ids)
 
 
 def extend_schedule_if_due(db: Session, r: redis.Redis | None) -> int:

@@ -114,3 +114,52 @@ def test_one_movie_can_be_fetched_by_id(client):
     m = client.post("/movies", json={"title": "Solo", "duration_minutes": 90}, headers=adm).json()
     assert client.get(f"/movies/{m['id']}").json()["title"] == "Solo"
     assert client.get("/movies/99999").status_code == 404
+
+
+def test_once_there_are_enough_movies_with_posters_only_those_are_scheduled(client, db):
+    from app.models import Movie
+    from app.services.schedule_service import MIN_MOVIES_WITH_POSTERS
+    _setup(client, titles=("Plain",))
+    for i in range(MIN_MOVIES_WITH_POSTERS):
+        db.add(Movie(title=f"Artwork {i}", duration_minutes=100, poster_url=f"https://image.tmdb.org/t/p/w500/{i}.jpg"))
+    db.commit()
+    ensure_schedule(db, days_ahead=2, now=NOW)
+    titles = set(db.scalars(select(Movie.title).join(Showtime, Showtime.movie_id == Movie.id)))
+    assert titles and "Plain" not in titles and all(t.startswith("Artwork") for t in titles)
+
+
+def test_with_few_posters_every_movie_is_still_scheduled(client, db):
+    _setup(client, titles=("Plain A", "Plain B"))
+    ensure_schedule(db, days_ahead=1, now=NOW)
+    from app.models import Movie
+    assert set(db.scalars(select(Movie.title).join(Showtime, Showtime.movie_id == Movie.id))) == {"Plain A", "Plain B"}
+
+
+def test_refresh_removes_only_unbooked_future_showtimes_and_ensure_schedule_restocks(client, db):
+    from datetime import timedelta
+    from app.models import Booking
+    from app.services.schedule_service import clear_unbooked_future_showtimes
+    from tests.conftest import book_seat_pending, signup_and_login
+    _setup(client)
+    created = ensure_schedule(db, days_ahead=1, now=NOW)
+    first = db.scalars(select(Showtime).order_by(Showtime.starts_at)).first()
+    seat = client.get(f"/showtimes/{first.id}/seats").json()[0]["id"]
+    h = signup_and_login(client, "refresh@example.com")
+    book_seat_pending(client, h, seat)                                         # one showtime now has a booking
+    assert db.scalar(select(func.count()).select_from(Booking)) == 1
+
+    assert clear_unbooked_future_showtimes(db, NOW) == created - 1             # dry run (default): counts only
+    assert db.scalar(select(func.count()).select_from(Showtime)) == created
+    assert clear_unbooked_future_showtimes(db, NOW, dry_run=False) == created - 1
+    assert [s.id for s in db.scalars(select(Showtime))] == [first.id]          # the booked one survives, with its seats
+    assert db.scalar(select(func.count()).select_from(ShowtimeSeat)) == 8
+    assert ensure_schedule(db, days_ahead=1, now=NOW) == created - 1           # and the rest is restocked
+
+
+def test_refresh_keeps_showtimes_about_to_start(client, db):
+    from app.services.schedule_service import clear_unbooked_future_showtimes
+    _setup(client)
+    ensure_schedule(db, days_ahead=0, now=NOW)
+    nearly = datetime(2030, 6, 1, 4, 45, tzinfo=UTC)                           # 10:15 India: the 10:30 show is 15 minutes away
+    removed = clear_unbooked_future_showtimes(db, nearly, dry_run=False)
+    assert removed == len(SLOTS) - 1                                           # the 10:30 show is kept

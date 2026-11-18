@@ -29,6 +29,9 @@ LANG_CODES = {"telugu": "te", "hindi": "hi", "tamil": "ta", "english": "en", "ka
 
 
 
+_conn = None   # the one kept-open connection (see _fetch_json)
+
+
 def _env(name: str) -> str:
     """The setting from the environment, else from a .env file (current folder, this script's folder, or its parent)."""
     value = os.environ.get(name, "").strip()
@@ -47,22 +50,39 @@ def _env(name: str) -> str:
 
 
 
-def _fetch_json(request, tries: int = 8):
-    """GET a URL and parse the JSON. On a flaky network some connections are reset before they start,
-    so a failed connection (or a 429/5xx reply) is retried a few times with a short pause."""
+def _fetch_json(request, tries: int = 15):
+    """GET a URL and parse the JSON, over ONE connection that is kept open and reused. On a flaky network
+    each new connection can be reset before it starts, so opening hundreds of them fails; reusing one
+    needs far fewer. A dropped connection (or a 429/5xx reply) is retried with a short pause."""
+    import http.client
+    global _conn
+    parts = urllib.parse.urlsplit(request.full_url)
+    target = parts.path + ("?" + parts.query if parts.query else "")
     last = None
     for attempt in range(tries):
         try:
-            with urllib.request.urlopen(request, timeout=20) as r:
-                return json.load(r)
-        except urllib.error.HTTPError as exc:
-            if exc.code not in (429, 500, 502, 503, 504):
-                raise
+            if _conn is None:
+                _conn = http.client.HTTPSConnection(parts.netloc, timeout=20)
+            _conn.request("GET", target, headers=dict(request.header_items()))
+            resp = _conn.getresponse()
+            body = resp.read()
+            if resp.status in (429, 500, 502, 503, 504):
+                last = f"HTTP {resp.status}"
+                _conn.close(); _conn = None
+            elif resp.status >= 400:
+                raise urllib.error.HTTPError(request.full_url, resp.status, resp.reason, resp.headers, None)
+            else:
+                return json.loads(body)
+        except urllib.error.HTTPError:
+            raise
+        except (OSError, http.client.HTTPException) as exc:
             last = exc
-        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as exc:
-            last = exc
-        time.sleep(min(0.4 * (attempt + 1), 3))
+            if _conn is not None:
+                _conn.close()
+            _conn = None
+        time.sleep(min(0.5 * (attempt + 1), 4))
     raise SystemExit(f"Could not reach the service after {tries} tries ({last}). Check your network and try again.")
+
 
 def _prefer_ipv4() -> None:
     """Try IPv4 addresses first. On some networks IPv6 is advertised but does not work, which makes

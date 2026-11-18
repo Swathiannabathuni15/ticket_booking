@@ -66,3 +66,15 @@ def test_existing_movies_are_updated_without_overwriting_what_is_known(db):
 def test_the_same_title_in_another_language_is_a_different_movie(db):
     db.add(Movie(title="Magic", language="Telugu", duration_minutes=100)); db.commit()
     assert upsert_movies(db, [{"title": "Magic", "language": "Marathi"}]) == {"created": 1, "updated": 0}
+
+
+def test_posters_only_skips_new_movies_without_a_poster_but_still_updates_existing_ones(db):
+    db.add(Movie(title="Existing", language="Hindi", duration_minutes=PLACEHOLDER_MINUTES)); db.commit()
+    r = upsert_movies(db, [
+        {"title": "Has Art", "language": "Hindi", "poster_url": "https://image.tmdb.org/a.jpg"},
+        {"title": "No Art", "language": "Hindi"},
+        {"title": "Existing", "language": "Hindi", "duration_minutes": 130},          # no poster, but it is already ours
+    ], posters_only=True)
+    assert r == {"created": 1, "updated": 1}
+    assert {m.title for m in db.scalars(select(Movie))} == {"Existing", "Has Art"}
+    assert db.scalar(select(Movie.duration_minutes).where(Movie.title == "Existing")) == 130

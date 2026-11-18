@@ -19,8 +19,10 @@ def _norm(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
 
 
-def upsert_movies(db: Session, entries: list[dict]) -> dict:
-    """entries: [{title, language, release_date?, genre?, poster_url?, duration_minutes?, rating?}]"""
+def upsert_movies(db: Session, entries: list[dict], *, posters_only: bool = False) -> dict:
+    """entries: [{title, language, release_date?, genre?, poster_url?, duration_minutes?, rating?}]
+    posters_only: do not CREATE a movie that has no poster (existing movies are still updated), so the
+    listing never gains a plain generated-poster entry."""
     existing = {(_norm(m.title), (m.language or "").lower()): m for m in db.scalars(select(Movie)).all()}
     created = updated = 0
     for e in entries:
@@ -28,6 +30,8 @@ def upsert_movies(db: Session, entries: list[dict]) -> dict:
         release = date.fromisoformat(e["release_date"]) if e.get("release_date") else None
         m = existing.get(key)
         if m is None:
+            if posters_only and not e.get("poster_url"):
+                continue
             m = Movie(title=e["title"], language=e.get("language", "English"), genre=e.get("genre", ""),
                       duration_minutes=e.get("duration_minutes") or PLACEHOLDER_MINUTES, poster_url=e.get("poster_url"),
                       rating=e.get("rating"), release_date=release)
