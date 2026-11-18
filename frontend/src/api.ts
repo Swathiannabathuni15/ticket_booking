@@ -169,6 +169,45 @@ export type ShareView = {
   name: string; amount_cents: number; status: string; movie_title: string; starts_at: string; seats: string[];
 };
 
+export type TicketState = "valid" | "used" | "cancelled";
+export type TicketPublic = {
+  ticket_code: string; state: TicketState; movie_title: string; poster_url: string | null;
+  theatre_name: string; city: string; screen_name: string; starts_at: string; seat_labels: string[];
+  checked_in_at: string | null;
+};
+export type Ticket = TicketPublic & {
+  booking_id: number; ticket_url: string; qr_image: string; ends_at: string; total_cents: number; directions_url: string;
+};
+export type CheckInResult = "admitted" | "already_used" | "cancelled" | "too_early" | "expired" | "invalid";
+export type CheckIn = { result: CheckInResult; message: string; ticket: TicketPublic | null };
+
+/** Download a file that needs the sign-in token (a plain <a href> can't send it). */
+export async function downloadWithAuth(path: string, filename: string): Promise<void> {
+  const token = tokenStore.get();
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, friendlyMessage(res.status, detailOf(body)));
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** What a scanned QR code (or typed text) says, as a ticket code: "…/ticket/ABCD-EFGH-JKLM" or "abcd efgh jklm". */
+export function ticketCodeFrom(text: string): string | null {
+  const fromUrl = text.match(/\/ticket\/([A-Za-z0-9-]+)/);
+  const raw = (fromUrl ? fromUrl[1] : text).replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/.test(raw)) return null;
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+}
+
 // ---- endpoints ----
 export const api = {
   signup: (email: string, password: string) =>
@@ -238,6 +277,11 @@ export const api = {
     request<{ subscribed: boolean }>("POST", "/push/subscribe", { body: sub }),
   pushUnsubscribe: (endpoint: string) => request<{ subscribed: boolean }>("DELETE", "/push/subscribe", { body: { endpoint } }),
   pushTest: () => request<{ sent: number }>("POST", "/push/test"),
+  ticket: (bookingId: number) => request<Ticket>("GET", `/bookings/${bookingId}/ticket`),
+  emailTicket: (bookingId: number) => request<{ sent_to: string }>("POST", `/bookings/${bookingId}/ticket/email`),
+  ticketCalendar: (bookingId: number) => downloadWithAuth(`/bookings/${bookingId}/ticket.ics`, `ticket-${bookingId}.ics`),
+  publicTicket: (code: string) => request<TicketPublic>("GET", `/tickets/${encodeURIComponent(code)}`, { auth: false }),
+  checkIn: (code: string) => request<CheckIn>("POST", `/tickets/${encodeURIComponent(code)}/check-in`),
   // admin
   adminBookings: (status?: string) =>
     request<Booking[]>("GET", `/admin/bookings?limit=200${status ? `&status=${status}` : ""}`),

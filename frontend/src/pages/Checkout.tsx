@@ -122,11 +122,13 @@ export default function CheckoutPage() {
       {booking.status === "confirmed" && (
         <>
           <p className="success">Payment received. Your tickets are confirmed.</p>
+          <p className="muted">Your e-ticket with its QR code is ready. If your account has an email address, we have emailed it to you too.</p>
           <p><strong>{booking.theatre_name}</strong>, {booking.city}</p>
           <TheatreMap theatre={booking.theatre_name} city={booking.city} />
           <ReminderOptIn />
           <div className="actions">
-            <button className="primary" onClick={() => nav(`/bookings/${booking.id}/split`)}>Split the bill with friends</button>
+            <Link className="btn primary" to={`/bookings/${booking.id}/ticket`}>🎟️ View e-ticket</Link>
+            <button onClick={() => nav(`/bookings/${booking.id}/split`)}>Split the bill with friends</button>
             <Link className="btn" to="/bookings">My bookings</Link>
           </div>
         </>

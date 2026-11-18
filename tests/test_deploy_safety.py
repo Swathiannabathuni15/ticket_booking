@@ -8,7 +8,8 @@ from tests.conftest import _test_redis, admin_headers
 
 def _prod(**over):
     base = dict(environment="production", jwt_secret="x" * 48, payment_webhook_secret="y" * 48,
-                otp_dev_mode=False, cors_origin_regex="", gateway_allow_test_methods=False)
+                otp_dev_mode=False, cors_origin_regex="", gateway_allow_test_methods=False,
+                public_base_url="https://tickets.example.com")
     return Settings(_env_file=None, **{**base, **over})
 
 
@@ -23,6 +24,7 @@ def test_a_correct_production_config_has_no_problems():
     ({"otp_dev_mode": True}, "OTP_DEV_MODE"),
     ({"gateway_allow_test_methods": True}, "GATEWAY_ALLOW_TEST_METHODS"),
     ({"cors_origin_regex": r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"}, "CORS_ORIGIN_REGEX"),
+    ({"public_base_url": "http://localhost:5173"}, "PUBLIC_BASE_URL"),
 ])
 def test_each_insecure_production_setting_is_reported(over, needle):
     problems = _prod(**over).production_problems()
@@ -58,7 +60,7 @@ def test_a_code_can_never_open_an_admin_account(client):
 def test_background_round_runs_the_jobs_and_only_one_process_wins_the_lock():
     r = _test_redis()
     first = inprocess.tick(r)
-    assert set(first) == {"reconciled", "expired", "reminders", "scheduled"} and "skipped" not in first
+    assert set(first) == {"reconciled", "expired", "reminders", "ticket_emails", "scheduled"} and "skipped" not in first
     assert inprocess.tick(r) == {"skipped": True}                  # a second server in the same moment does nothing
     r.delete(inprocess.LOCK_KEY)
     assert "skipped" not in inprocess.tick(r)

@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     # you can also run scripts/schedule_showtimes.py yourself, e.g. once a day).
     auto_schedule_days: int = 0
 
+    # The website's public address. The QR code on a ticket points at <this>/ticket/<code>.
+    public_base_url: str = "http://localhost:5173"
+
     # Split-the-bill share links
     split_link_ttl_hours: int = 48
     split_max_shares: int = 20
@@ -134,6 +137,9 @@ class Settings(BaseSettings):
             problems.append("OTP_DEV_MODE is on: sign-in codes would be shown on screen to anyone. Set OTP_DEV_MODE=false.")
         if self.cors_origin_regex and "localhost" in self.cors_origin_regex:
             problems.append("CORS_ORIGIN_REGEX still allows localhost and home networks. Set CORS_ORIGIN_REGEX= (empty) and list your website in CORS_ORIGINS.")
+        if not self.public_base_url.startswith("https://"):
+            problems.append("PUBLIC_BASE_URL is not an https:// address, so the QR codes on tickets would point nowhere useful. "
+                            "Set it to your website, e.g. PUBLIC_BASE_URL=https://your-website.example.com")
         return problems
 
 

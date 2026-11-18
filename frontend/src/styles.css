@@ -430,3 +430,51 @@ body:has(.paybar) .seatview-float { bottom: 120px; }
   .pick-total { text-align: left; flex: 1 1 100%; }
   .pick-side button { flex: 1 1 auto; }
 }
+
+/* ---------- E-ticket ---------- */
+.ticket-page { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.ticket { background: var(--panel); border-radius: 16px; box-shadow: var(--shadow-lg); overflow: hidden; position: relative; }
+.ticket.cancelled { filter: grayscale(.8); opacity: .85; }
+.ticket-head { display: flex; gap: 14px; padding: 18px; background: linear-gradient(135deg, #fff 0%, #fff5f7 100%); }
+.ticket-poster { width: 92px; min-width: 92px; height: 138px; border-radius: 8px; object-fit: cover; }
+.ticket-info { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ticket-info h2 { margin: 2px 0; font-size: 1.25rem; line-height: 1.2; overflow-wrap: anywhere; }
+.ticket-when { font-size: .95rem; }
+.ticket-seats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-top: 6px; }
+.ticket-seats strong { font-size: 1.1rem; }
+.ticket-state { align-self: flex-start; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; }
+.ticket-state.valid { background: #e3f6ea; color: var(--ok); }
+.ticket-state.used { background: #ececf2; color: var(--muted); }
+.ticket-state.cancelled { background: #fde6e9; color: var(--err); }
+/* the perforated line with two "bites" out of the sides, like a paper ticket */
+.ticket-tear { position: relative; height: 0; border-top: 2px dashed var(--border); margin: 0 14px; }
+.ticket-tear::before, .ticket-tear::after { content: ""; position: absolute; top: -13px; width: 24px; height: 24px; border-radius: 50%; background: var(--bg); }
+.ticket-tear::before { left: -27px; } .ticket-tear::after { right: -27px; }
+.ticket-qr { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px; text-align: center; }
+.ticket-qr img { width: 220px; height: 220px; max-width: 100%; image-rendering: pixelated; }
+.ticket.used .ticket-qr img { opacity: .35; }
+.ticket-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.15rem; letter-spacing: .12em; font-weight: 600; }
+.ticket-total { display: flex; justify-content: space-between; width: 100%; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px; }
+.ticket-actions { justify-content: center; flex-wrap: wrap; }
+
+.checkin-desk input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.checkin-desk .row { gap: 8px; flex-wrap: wrap; }
+.checkin-video { width: 100%; max-width: 360px; border-radius: 12px; margin: 10px 0; background: #000; }
+.checkin-banner { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-radius: 12px; color: #fff; margin: 10px 0; }
+.checkin-banner strong { font-size: 1.5rem; letter-spacing: .04em; }
+.checkin-banner.ok { background: var(--ok); } .checkin-banner.bad { background: var(--err); } .checkin-banner.warn { background: var(--warn); }
+
+@media (max-width: 420px) {
+  .ticket-poster { width: 72px; min-width: 72px; height: 108px; }
+  .ticket-qr img { width: 200px; height: 200px; }
+}
+
+/* Print just the ticket: no navbar, background, buttons or chat. */
+@media print {
+  body { background: #fff !important; }
+  body * { visibility: hidden; }
+  .ticket, .ticket * { visibility: visible; }
+  .ticket { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; border: 1px solid #999; }
+  .ticket-tear::before, .ticket-tear::after { background: #fff; }
+  .no-print { display: none !important; }
+}

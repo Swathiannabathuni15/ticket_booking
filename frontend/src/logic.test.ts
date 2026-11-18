@@ -151,3 +151,20 @@ describe("smart picks wording", () => {
     expect(labelTone("Also good")).toBe("plain");
   });
 });
+
+import { ticketCodeFrom } from "./api";
+
+describe("ticketCodeFrom (what a scanned QR code or typed text means)", () => {
+  it("reads the code out of the ticket link", () => {
+    expect(ticketCodeFrom("https://example.com/ticket/ABCD-EFGH-JK23")).toBe("ABCD-EFGH-JK23");
+  });
+  it("accepts typed codes in any case, with spaces or no dashes", () => {
+    expect(ticketCodeFrom("abcd efgh jk23")).toBe("ABCD-EFGH-JK23");
+    expect(ticketCodeFrom("ABCDEFGHJK23")).toBe("ABCD-EFGH-JK23");
+  });
+  it("refuses anything that cannot be a ticket", () => {
+    expect(ticketCodeFrom("hello")).toBeNull();
+    expect(ticketCodeFrom("OOOO-OOOO-OOOO")).toBeNull();   // O, 0, I, 1 are never used
+    expect(ticketCodeFrom("https://evil.example/login")).toBeNull();
+  });
+});

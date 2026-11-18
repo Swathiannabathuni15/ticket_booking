@@ -296,3 +296,43 @@ class SeatOptionsOut(BaseModel):
     count: int
     message: str | None = None      # explains an empty or compromised answer
     options: list[SeatOptionOut]
+
+
+class TicketOut(BaseModel):
+    """The owner's e-ticket."""
+    booking_id: int
+    ticket_code: str
+    ticket_url: str                 # what the QR code contains
+    qr_image: str                   # a data: URI (SVG) to show the QR code
+    state: str                      # valid | used | cancelled
+    movie_title: str
+    poster_url: str | None = None
+    theatre_name: str
+    city: str
+    screen_name: str
+    starts_at: datetime
+    ends_at: datetime
+    seat_labels: list[str]
+    total_cents: int
+    checked_in_at: datetime | None = None
+    directions_url: str
+
+
+class TicketPublicOut(BaseModel):
+    """What anyone holding a ticket's code may see: nothing about who bought it."""
+    ticket_code: str
+    state: str                      # valid | used | cancelled
+    movie_title: str
+    poster_url: str | None = None
+    theatre_name: str
+    city: str
+    screen_name: str
+    starts_at: datetime
+    seat_labels: list[str]
+    checked_in_at: datetime | None = None
+
+
+class CheckInOut(BaseModel):
+    result: str                     # admitted | already_used | cancelled | too_early | expired | invalid
+    message: str
+    ticket: TicketPublicOut | None = None

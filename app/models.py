@@ -190,6 +190,11 @@ class Booking(Base):
     payment_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # E-ticket (app/services/ticket_service.py): a random code issued when the booking is paid.
+    # The QR code on the ticket points at it; scanning it at the door marks the ticket used.
+    ticket_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmation_emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     seats: Mapped[list["BookingSeat"]] = relationship(back_populates="booking")
 

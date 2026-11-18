@@ -22,3 +22,9 @@ def extend_schedule_job() -> int:
     from app.services.schedule_service import extend_schedule_if_due
     with SessionLocal() as db:
         return extend_schedule_if_due(db, get_redis())
+
+
+def send_pending_confirmations_job() -> int:
+    from app.services.ticket_email import send_pending_confirmations
+    with SessionLocal() as db:
+        return send_pending_confirmations(db)

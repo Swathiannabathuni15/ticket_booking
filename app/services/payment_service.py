@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Booking, BookingSeat, Payment, PaymentAttempt, WebhookEvent
-from app.services import fake_gateway
+from app.services import fake_gateway, ticket_email, ticket_service
 from app.services.split_service import booking_total_cents
 
 log = logging.getLogger(__name__)
@@ -133,6 +133,7 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
     """The bank says the money moved. Confirm the booking - or refund if that
     is no longer possible. Safe to call any number of times, from anywhere."""
     refund_key = None
+    just_confirmed = False
     try:
         booking_id = db.scalar(select(PaymentAttempt.booking_id).where(PaymentAttempt.id == attempt_id))
         # Same lock order everywhere (booking, then attempt) so two paths can't deadlock.
@@ -149,6 +150,8 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
             # BookingSeat.status is a denormalized copy - see app/models.py.
             db.execute(update(BookingSeat).where(BookingSeat.booking_id == booking.id).values(status="confirmed"))
             attempt.status = "succeeded"
+            ticket_service.issue_ticket(db, booking)      # the QR e-ticket, in the same transaction
+            just_confirmed = True
         else:
             attempt.status = "refunded"
             attempt.failure_reason = f"paid, but the booking was already {booking.status}"
@@ -160,6 +163,8 @@ def _settle_success(db: Session, attempt_id: int, charge_id: str) -> Booking:
     if refund_key:
         fake_gateway.refund(refund_key)
         log.warning("refunded charge %s: booking %s was not payable", charge_id, booking_id)
+    if just_confirmed:
+        ticket_email.notify(booking.id)           # best effort, after commit; the sweeper retries
     return booking
 
 

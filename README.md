@@ -23,6 +23,7 @@ These are the parts that go beyond a basic booking site.
 11. **A real 3D hall.** Tap "View in 3D" to see the hall from your seat's real position and height (drag to look around), or switch to the whole-hall overview and tap any seat to sit there. Built from our own seat layout.
 12. **A seat finder.** On a movie page, find the best free seats together in every upcoming show: centre seats only, not too close, a price cap, and morning, afternoon, evening or night.
 13. **Always-current listings.** 10 cities with several theatres each, "Now showing" and "Coming soon" rows, and a rolling schedule that keeps the next few days stocked with showtimes.
+14. **QR e-tickets and a confirmation email.** When you pay, you get a ticket with a QR code (in **My bookings**, under **E-ticket**). It shows the movie, time, theatre, seats and amount, with buttons for Email me, Add to calendar, Print and Directions. If your account has an email address and email is set up, the same ticket (QR code, calendar file and all) is emailed to you, exactly once. At the door, staff open **Admin > Check-in**, scan the QR code (or type the code under it) and get a big green ADMIT or red DO NOT ADMIT. A ticket can only be used once, even if two staff scan it at the same moment, and a cancelled booking's ticket stops working.
 
 Also included: city picker, movie posters, Telugu movies, email or phone-code sign in, a small admin area, and a white page with a soft moving background.
 
@@ -102,9 +103,10 @@ npm run dev
 2. Choose how many seats, then click a seat.
 3. Press **Pay**, sign in (with a phone number, the code is shown on screen), and pay.
 4. On the payment page, try the **Demo card** menu. "Bank charges, but the reply is lost" shows the safe-payment feature: the page says "Confirming..." and a few seconds later the booking confirms by itself.
-5. Press **Split the bill**, add friends, and open a link in a private window to pay as a friend.
-6. Try the notification: click your email at the top right, press **Turn on ticket reminders**, allow it, then press **Send a test**. For the real thing, run `python scripts/demo_reminder.py` (makes a show starting in 12 minutes), book and pay for it, and make sure the two programs above are running. A notification appears when it is 15 minutes away.
-7. Admin login: `admin@demo-cinema.com` / `demo-password-1`.
+5. Press **View e-ticket** to see your QR ticket. Then sign in as the admin (step 8), open **Admin > Check-in** and type the code under the QR code: the first time it says ADMIT, the second time DO NOT ADMIT. (Shows more than 3 hours away say "entry is not open yet", which is correct.) The QR code opens `http://localhost:5173/ticket/<code>`, so it only works from a phone if you set `PUBLIC_BASE_URL` to an address the phone can reach (see "Use it on your phone").
+6. Press **Split the bill**, add friends, and open a link in a private window to pay as a friend.
+7. Try the notification: click your email at the top right, press **Turn on ticket reminders**, allow it, then press **Send a test**. For the real thing, run `python scripts/demo_reminder.py` (makes a show starting in 12 minutes), book and pay for it, and make sure the two programs above are running. A notification appears when it is 15 minutes away.
+8. Admin login: `admin@demo-cinema.com` / `demo-password-1`.
 
 ## Optional
 
@@ -136,6 +138,7 @@ To open it from a phone on the **same Wi-Fi** as your laptop:
    npm run dev:phone
    ```
 4. On the phone open `http://192.168.1.20:5173` (your address, port 5173).
+5. So that QR codes on tickets open on the phone too, add `PUBLIC_BASE_URL=http://192.168.1.20:5173` to `.env` and restart the backend. (Tickets made before the change keep the same code; the QR picture just points at the new address.)
 
 If it doesn't open: some office or guest Wi-Fi blocks devices from talking to each other, and a firewall on the laptop can block ports 5173 and 8000. A phone hotspot shared with the laptop works around the first problem. Only use this on a network you trust.
 
@@ -154,6 +157,8 @@ SMTP_PASSWORD=your-16-letter-app-password
 SMTP_FROM=you@gmail.com
 ```
 On the sign-in window choose "Continue with Email" then "Email me a code instead".
+
+The same settings also send the **booking confirmation email** with the QR e-ticket and a calendar file. It is sent right after payment, in the background, so a slow mail server never slows down paying. If sending fails, the background jobs try again every round (for up to a day after the payment), and each booking is emailed only once. People who signed in with a phone number have no email address, so they just use the ticket in **My bookings**.
 
 **By SMS** needs a paid account with an SMS company:
 ```

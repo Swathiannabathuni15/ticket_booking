@@ -88,6 +88,11 @@ def send_email(address: str, code: str) -> None:
     msg["From"] = settings.smtp_from
     msg["To"] = address
     msg.set_content(_message(code))
+    smtp_send(msg)
+
+
+def smtp_send(msg: EmailMessage) -> None:
+    """Send one email with the SMTP settings. Also used for ticket confirmations."""
     try:
         smtp_cls = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
         with smtp_cls(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
