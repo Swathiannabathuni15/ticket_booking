@@ -28,7 +28,15 @@ def _my_paid_booking(db: Session, booking_id: int, user: User) -> Booking:
     if booking.status != "confirmed":
         raise HTTPException(status.HTTP_409_CONFLICT, "There is no ticket: this booking is not paid")
     if not booking.ticket_code:  # paid before e-tickets existed: give it one now
-        locked = required(db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update()), "booking")
+        locked = required(
+            db.scalar(
+                select(Booking)
+                .where(Booking.id == booking_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ),
+            "booking",
+        )
         ticket_service.issue_ticket(db, locked)
         db.commit()
         db.refresh(booking)

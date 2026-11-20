@@ -1,13 +1,17 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from app.config import settings
-from app.gateway_middleware import PerUserRateLimit
+from app.gateway_middleware import VERSION_PREFIX, PerUserRateLimit
+from app.observability import RequestContext, error_body, install_error_handlers, setup_error_tracking, setup_logging
 from app.routers import admin, agent, auth, bookings, catalog, finder, holds, payments, push, showtimes, splits, tickets
+
+setup_logging()
+setup_error_tracking()
 
 
 @asynccontextmanager
@@ -26,45 +30,69 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Ticket Booking API", version="0.1.0", lifespan=lifespan)
-# Added BEFORE CORS so CORS wraps it: a 429 from the gateway still carries CORS headers.
-app.add_middleware(PerUserRateLimit)
+app = FastAPI(title="Ticket Booking API", version="1.0.0", lifespan=lifespan)
+install_error_handlers(app)
+# Middleware added LATER runs FURTHER OUT. Order, outside in: CORS -> request id/logs -> per-user limit -> app.
+# Request id is inside CORS so even our 500 answers carry CORS headers (the browser can read them).
+app.add_middleware(PerUserRateLimit)  # a 429 from here still gets a request id and CORS headers
+app.add_middleware(RequestContext)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_origin_regex=settings.cors_origin_regex or None,
     allow_methods=["*"],
-    allow_headers=["*"],  # Authorization, Idempotency-Key, Content-Type
-    expose_headers=["Retry-After"],  # so the UI can show "try again in N s" on a 429
+    allow_headers=["*"],  # Authorization, Idempotency-Key, Content-Type, X-Request-ID
+    # so the UI can show "try again in N s", and quote the request id when something fails
+    expose_headers=["Retry-After", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "X-Request-ID"],
 )
-app.include_router(admin.router)
-app.include_router(agent.router)
-app.include_router(auth.router)
-app.include_router(catalog.router)
-app.include_router(showtimes.router)
-app.include_router(finder.router)
-app.include_router(bookings.router)
-app.include_router(holds.router)
-app.include_router(payments.router)
-app.include_router(push.router)
-app.include_router(splits.router)
-app.include_router(tickets.router)
+
+meta = APIRouter(tags=["meta"])
+
+
+@meta.get("/config")
+def public_config():
+    """Settings the website needs to know. test_cards = the checkout may offer the demo
+    "card" menu; when false the server ignores whichever card the browser asks for."""
+    return {
+        "test_cards": settings.gateway_allow_test_methods and settings.payment_provider == "simulated",
+        "payment_provider": settings.payment_provider,
+    }
+
+
+@meta.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+ROUTERS = [
+    admin.router,
+    agent.router,
+    auth.router,
+    catalog.router,
+    showtimes.router,
+    finder.router,
+    bookings.router,
+    holds.router,
+    payments.router,
+    push.router,
+    splits.router,
+    tickets.router,
+    meta,
+]
+# VERSIONED PATHS. Everything lives under /api/v1 (the website uses these). The same endpoints also
+# answer at the old un-versioned paths, hidden from the docs and marked with a `Deprecation: true`
+# header, so links already sent, scripts and the bank's webhook URL keep working. A future
+# incompatible change goes in /api/v2 while /api/v1 keeps working.
+for _r in ROUTERS:
+    app.include_router(_r, prefix=VERSION_PREFIX)
+for _r in ROUTERS:
+    app.include_router(_r, include_in_schema=False)
 
 
 @app.exception_handler(PoolTimeout)
 def _db_pool_exhausted(_req: Request, _exc: PoolTimeout):
     """All DB connections busy for longer than the pool timeout: we are
     overloaded. Say so (503 + Retry-After) instead of an opaque 500."""
-    return JSONResponse({"detail": "Server is busy, try again shortly"}, status_code=503, headers={"Retry-After": "2"})
-
-
-@app.get("/config", tags=["meta"])
-def public_config():
-    """Settings the website needs to know. test_cards = the checkout may offer the demo
-    "card" menu; when false the server ignores whichever card the browser asks for."""
-    return {"test_cards": settings.gateway_allow_test_methods}
-
-
-@app.get("/health", tags=["meta"])
-def health():
-    return {"status": "ok"}
+    return JSONResponse(
+        error_body(503, "Server is busy, try again shortly", "busy"), status_code=503, headers={"Retry-After": "2"}
+    )

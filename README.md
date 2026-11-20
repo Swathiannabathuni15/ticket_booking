@@ -123,6 +123,32 @@ npm run dev
   ```
   (Free key from Google AI Studio. `ANTHROPIC_API_KEY=...` works too. If both are set, Gemini is used.) Without a key, the chat says the assistant is not set up. `.env` is never committed to git.
 
+## Pay with Razorpay (test mode)
+
+Out of the box payments use a **fake bank** (no keys, no real anything). To try real payment pages with **no real money**, use Razorpay's free test keys:
+
+1. Make a free Razorpay account and, in the dashboard, switch to **Test Mode**. Go to Settings > API Keys > Generate Test Key. You get a Key Id (`rzp_test_...`) and a Key Secret.
+2. In the dashboard turn on **automatic payment capture** (Settings > Configuration > Payment Capture), or the money stays "authorized" and is never taken.
+3. Put the keys in your `.env` file (never in git) and restart the backend:
+   ```
+   PAYMENT_PROVIDER=razorpay
+   RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+   RAZORPAY_KEY_SECRET=your-key-secret
+   RAZORPAY_WEBHOOK_SECRET=any-long-random-text-you-choose
+   ```
+   On a real server, keep the secrets in a secret store instead of a file (for example **Azure Key Vault**, injected as environment variables). The app only reads environment variables, so nothing changes in the code.
+4. **Webhook** (so a payment is confirmed even if the customer closes the page): in the dashboard go to Settings > Webhooks > Add. The URL is `https://<your-public-address>/api/v1/webhooks/razorpay`, the secret is the same `RAZORPAY_WEBHOOK_SECRET`, and tick `payment.captured`, `payment.failed` and `order.paid`. Razorpay cannot reach `localhost`, so for local testing use a tunnel such as ngrok or cloudflared. Without a webhook everything still works: the page confirms the payment itself, and the background job checks with Razorpay every 30 seconds for any it missed.
+5. Pay with Razorpay's test cards and UPI ids (listed in their docs, "Test Card Details"). The page then says "Confirming..." and shows your e-ticket.
+
+How it stays safe:
+- The server creates **one order per booking** for the exact price from our database, and **saves the order id before the payment window opens**. Pressing Pay twice, reloading or opening two tabs always gives the same order, never a second one.
+- The browser's "I paid" counts only with Razorpay's signature (made with the key secret), and the webhook only with its own signature. Each webhook event is processed once (its id is stored), and a payment of a different amount than the booking is refused.
+- If money arrives after the booking expired, it is **refunded automatically**. If that refund call fails, the background job retries it.
+- While Razorpay is the provider, the fake card endpoint is switched **off**, so nobody can "pay" with the demo card.
+- With `ENVIRONMENT=production` the server refuses to start with the fake bank or without the keys.
+
+Not covered yet: the split-the-bill friend shares still use the fake ledger, and cancelling an already paid booking does not refund it.
+
 ## Use it on your phone
 
 The website is built for phones too (two-column movie grid, swipe-sideways seat map, pop-ups that slide up, big tap buttons).

@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     # off = run the worker and scheduler yourself; inprocess = the web server runs the
     # cleanup / reminder loop itself (one process: fits free hosting).
     background_jobs: str = "off"
+    # Logs: "text" (easy to read in a terminal) or "json" (one line per event, for a log service).
+    # Empty = json in production, text otherwise.
+    log_format: str = ""
+    log_level: str = "INFO"
+    # Error tracking: set SENTRY_DSN (free tier at sentry.io) to get crashes with their request id.
+    sentry_dsn: str = ""
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ticketdb"
     jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"  # noqa: S105 (dev default; production refuses it)
@@ -84,9 +90,18 @@ class Settings(BaseSettings):
     rate_limit_user_per_second: int = 20  # the "gateway": any signed-in user, all endpoints
     rate_limit_payment_per_window: int = 10
 
+    # Who takes the money: "simulated" (the fake bank below: no keys, no real anything) or "razorpay"
+    # (see app/services/razorpay_gateway.py). With Razorpay, the fake card endpoint is switched OFF.
+    payment_provider: str = "simulated"
+    razorpay_key_id: str = ""  # public id, e.g. rzp_test_xxxx (test mode: no real money moves)
+    razorpay_key_secret: str = ""  # secret: .env only, never committed
+    razorpay_webhook_secret: str = ""  # the secret you type when adding the webhook in the Razorpay dashboard
+    razorpay_api_base: str = "https://api.razorpay.com/v1"
+    razorpay_checkout_name: str = "Ticketshow"  # shown at the top of the Razorpay window
+
     # Simulated bank + its signed webhooks (see app/services/fake_gateway.py)
     payment_webhook_secret: str = "dev-webhook-secret-change-me-0123456789"  # noqa: S105 (dev default; production refuses it)
-    payment_webhook_url: str = "http://127.0.0.1:8000/webhooks/payments"
+    payment_webhook_url: str = "http://127.0.0.1:8000/api/v1/webhooks/payments"
     payment_webhook_tolerance_seconds: int = 300
     gateway_webhook_delay_seconds: float = 2.0
     gateway_always_send_webhook: bool = False
@@ -131,6 +146,17 @@ class Settings(BaseSettings):
             problems.append("JWT_SECRET is a development value (anyone could forge logins). Set a long random one.")
         if "change-me" in self.payment_webhook_secret or self.payment_webhook_secret.startswith("dev-"):
             problems.append("PAYMENT_WEBHOOK_SECRET is a development value. Set a long random one.")
+        if self.payment_provider not in ("simulated", "razorpay"):
+            problems.append("PAYMENT_PROVIDER must be 'razorpay' or 'simulated'.")
+        elif self.payment_provider == "simulated":
+            problems.append(
+                "PAYMENT_PROVIDER is 'simulated': the fake bank approves every payment, so tickets would be free. "
+                "Set PAYMENT_PROVIDER=razorpay (test keys are fine for a demo)."
+            )
+        elif not (self.razorpay_key_id and self.razorpay_key_secret and self.razorpay_webhook_secret):
+            problems.append(
+                "PAYMENT_PROVIDER=razorpay needs RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET."
+            )
         if self.gateway_allow_test_methods:
             problems.append(
                 "GATEWAY_ALLOW_TEST_METHODS is on: the browser chooses which test 'card' works. "

@@ -15,6 +15,8 @@ export function apiBase(env: string | undefined = import.meta.env.VITE_API_URL, 
   return `${loc.protocol}//${loc.hostname}:8000`;
 }
 const BASE = typeof window === "undefined" ? "http://localhost:8000" : apiBase();  // no window in unit tests
+/** All endpoints are versioned: a future incompatible API change goes to /api/v2 without breaking this site. */
+const API = `${BASE}/api/v1`;
 const TOKEN_KEY = "tb_token";
 
 export const tokenStore = {
@@ -48,6 +50,12 @@ export function friendlyMessage(status: number, detail: string, retryAfter?: num
   }
 }
 
+/** On a server error, add the request id the server logged it under, so a report can be traced. */
+export function withReference(status: number, message: string, body: unknown): string {
+  const rid = (body as { request_id?: unknown } | null)?.request_id;
+  return status >= 500 && typeof rid === "string" && rid !== "-" ? `${message} (Reference: ${rid.slice(0, 8)})` : message;
+}
+
 function detailOf(body: unknown): string {
   const d = (body as { detail?: unknown } | null)?.detail;
   if (typeof d === "string") return d;
@@ -67,7 +75,7 @@ export async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(BASE + path, {
+    res = await fetch(API + path, {
       method,
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -83,7 +91,7 @@ export async function request<T>(
       tokenStore.clear();
       window.dispatchEvent(new Event(SESSION_EXPIRED));
     }
-    throw new ApiError(res.status, friendlyMessage(res.status, detailOf(body), retry), retry);
+    throw new ApiError(res.status, withReference(res.status, friendlyMessage(res.status, detailOf(body), retry), body), retry);
   }
   return body as T;
 }
@@ -104,6 +112,10 @@ export function uuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 /** Demo cards: the bank approves, declines, or charges but the reply is lost. */
+/** What the payment window needs. key_id is the PUBLIC key; the amount is what the server says the booking costs. */
+export type RazorpayOrder = {
+  key_id: string; order_id: string; amount: number; currency: string; booking_id: number; name: string; description: string;
+};
 export type PayMethod = "tok_ok" | "tok_decline" | "tok_timeout";
 
 // ---- types ----
@@ -187,7 +199,7 @@ export async function downloadWithAuth(path: string, filename: string): Promise<
   const token = tokenStore.get();
   let res: Response;
   try {
-    res = await fetch(BASE + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    res = await fetch(API + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   } catch {
     throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
   }
@@ -237,7 +249,11 @@ export const api = {
     request<{ access_token: string }>("POST", "/auth/login", { body: { email, password }, auth: false }),
   me: () => request<User>("GET", "/me"),
   logout: () => request<void>("POST", "/auth/logout"),
-  config: () => request<{ test_cards: boolean }>("GET", "/config", { auth: false }),
+  config: () => request<{ test_cards: boolean; payment_provider: "simulated" | "razorpay" }>("GET", "/config", { auth: false }),
+  razorpayOrder: (bookingId: number, key: string) =>
+    request<RazorpayOrder>("POST", "/payments/razorpay/order", { body: { booking_id: bookingId }, headers: { "Idempotency-Key": key } }),
+  razorpayVerify: (v: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+    request<Booking>("POST", "/payments/razorpay/verify", { body: v }),
   refresh: () => request<{ access_token: string }>("POST", "/auth/refresh"),
   otpRequest: (target: OtpTarget) =>
     request<OtpSent>("POST", "/auth/otp/request", { body: target, auth: false }),

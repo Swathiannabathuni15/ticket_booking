@@ -1,7 +1,7 @@
 """Shared FastAPI dependencies (current logged-in user)."""
 
 import redis
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ _bearer = bearer
 
 
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
     r: redis.Redis = Depends(get_redis),
@@ -29,6 +30,7 @@ def get_current_user(
     user = db.get(User, int(claims["sub"]))
     if user is None:
         raise unauthorized
+    request.state.user_id = user.id  # for the access log line
     return user
 
 

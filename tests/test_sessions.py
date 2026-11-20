@@ -109,10 +109,10 @@ def test_when_redis_is_down_logins_still_work_and_logout_does_not_crash(client):
 
 def test_config_tells_the_website_whether_test_cards_exist(client):
     settings.gateway_allow_test_methods = True
-    assert client.get("/config").json() == {"test_cards": True}
+    assert client.get("/config").json() == {"test_cards": True, "payment_provider": "simulated"}
     settings.gateway_allow_test_methods = False
     try:
-        assert client.get("/config").json() == {"test_cards": False}
+        assert client.get("/config").json() == {"test_cards": False, "payment_provider": "simulated"}
     finally:
         settings.gateway_allow_test_methods = True
 

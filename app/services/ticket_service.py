@@ -139,7 +139,16 @@ def check_in(db: Session, code: str, now: datetime | None = None) -> CheckInOut:
     same instant cannot both succeed."""
     now = now or datetime.now(UTC)
     code = normalize(code)
-    booking = db.scalar(select(Booking).where(Booking.ticket_code == code).with_for_update()) if code else None
+    booking = (
+        db.scalar(
+            select(Booking)
+            .where(Booking.ticket_code == code)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if code
+        else None
+    )
     if booking is None:
         return CheckInOut(result="invalid", message="This is not a valid ticket.")
     view = public_view(booking)

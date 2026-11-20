@@ -234,7 +234,9 @@ class Booking(Base):
         """paid | processing (a charge is in flight / webhook awaited) | failed | unpaid"""
         if self.status == "confirmed":
             return "paid"
-        if any(a.status == "pending" for a in self.attempts):
+        # Only the simulated bank has a "charge in flight". A Razorpay attempt is "pending" from the moment
+        # the order is created, i.e. while the customer is still choosing how to pay: that is "unpaid".
+        if any(a.status == "pending" and a.provider == "simulated" for a in self.attempts):
             return "processing"
         if self.attempts and self.attempts[-1].status == "failed":
             return "failed"
@@ -398,6 +400,12 @@ class PaymentAttempt(Base):
     gateway_key: Mapped[str] = mapped_column(String(140), unique=True)
     amount_cents: Mapped[int] = mapped_column()
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Who handled the money: "simulated" or "razorpay". Decides where a refund goes.
+    provider: Mapped[str] = mapped_column(String(20), default="simulated", server_default="simulated")
+    # Razorpay's ORDER id ("order_..."), saved BEFORE the customer sees the payment window. UNIQUE, so one
+    # order belongs to exactly one attempt, and a webhook can always be matched back to it.
+    gateway_order_id: Mapped[str | None] = mapped_column(String(60), unique=True, nullable=True)
+    # The bank's payment id ("pay_..." for Razorpay), set when the money moved. Used to refund.
     charge_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

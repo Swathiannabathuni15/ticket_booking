@@ -97,7 +97,11 @@ def book_seats(
         # module docstring for why that ordering is what avoids deadlocks
         # between two bookings that share some of the same seats.
         seats = db.scalars(
-            select(ShowtimeSeat).where(ShowtimeSeat.id.in_(seat_ids)).order_by(ShowtimeSeat.id).with_for_update()
+            select(ShowtimeSeat)
+            .where(ShowtimeSeat.id.in_(seat_ids))
+            .order_by(ShowtimeSeat.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         ).all()
         found_ids = {seat.id for seat in seats}
         missing = [sid for sid in seat_ids if sid not in found_ids]
@@ -148,7 +152,9 @@ def book_seats(
 
 def cancel_booking(db: Session, user_id: int, booking_id: int) -> Booking:
     try:
-        booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
+        booking = db.scalar(
+            select(Booking).where(Booking.id == booking_id).with_for_update().execution_options(populate_existing=True)
+        )
         if booking is None:
             raise BookingNotFound(booking_id)
         if booking.user_id != user_id:

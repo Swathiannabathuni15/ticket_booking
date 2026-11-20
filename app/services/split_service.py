@@ -96,7 +96,9 @@ def create_split(
     """`friends` are display names. With include_owner the owner is share #0
     (already paid - they covered the booking up front)."""
     try:
-        booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
+        booking = db.scalar(
+            select(Booking).where(Booking.id == booking_id).with_for_update().execution_options(populate_existing=True)
+        )
         if booking is None:
             raise BookingNotFound(booking_id)
         if booking.user_id != user_id:
@@ -188,7 +190,12 @@ def cancel_split_in_txn(db: Session, split: BillSplit) -> None:
 def cancel_split(db: Session, user_id: int, booking_id: int) -> BillSplit:
     try:
         split = get_split(db, user_id, booking_id)
-        db.execute(select(BillSplit).where(BillSplit.id == split.id).with_for_update())
+        db.execute(
+            select(BillSplit)
+            .where(BillSplit.id == split.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         cancel_split_in_txn(db, split)
         db.commit()
         return split
@@ -215,7 +222,7 @@ def resolve_share(db: Session, token: str, lock: bool = False) -> SplitShare:
         raise ShareLinkInvalid from exc
     stmt = select(SplitShare).where(SplitShare.id == share_id)
     if lock:
-        stmt = stmt.with_for_update()
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     share = db.scalar(stmt)
     if share is None or not secrets.compare_digest(share.nonce, nonce):
         raise ShareLinkInvalid
@@ -227,7 +234,15 @@ def pay_share(db: Session, token: str) -> tuple[SplitShare, bool]:
     already-paid share is a no-op that returns (share, False)."""
     try:
         share = resolve_share(db, token, lock=True)
-        split = required(db.scalar(select(BillSplit).where(BillSplit.id == share.split_id).with_for_update()), "split")
+        split = required(
+            db.scalar(
+                select(BillSplit)
+                .where(BillSplit.id == share.split_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ),
+            "split",
+        )
         booking = required(db.get(Booking, split.booking_id), "booking")
         if share.status == "paid":
             db.rollback()

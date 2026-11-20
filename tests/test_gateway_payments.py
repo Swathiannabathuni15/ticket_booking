@@ -209,3 +209,10 @@ def test_bank_failure_webhook_marks_the_attempt_failed(client, db, bank_events):
     assert bank_events and bank_events[0]["type"] == "payment.failed"
     assert _webhook(client, bank_events[0]).status_code == 200
     assert _status(client, h, b["id"])["payment_status"] == "failed"
+
+
+def test_the_versioned_webhook_path_works_and_is_not_rate_limited(client):
+    from app.config import settings
+
+    settings.rate_limit_user_per_second = 1
+    assert all(client.post("/api/v1/webhooks/payments", content=b"{}").status_code == 400 for _ in range(4))

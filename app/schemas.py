@@ -207,6 +207,30 @@ class PaymentCreate(BaseModel):
     payment_method: str = Field(default="tok_ok", pattern="^tok_(ok|decline|timeout)$")
 
 
+class RazorpayOrderIn(BaseModel):
+    booking_id: int
+
+
+class RazorpayOrderOut(BaseModel):
+    """What the website needs to open the Razorpay payment window."""
+
+    key_id: str  # the PUBLIC key id (rzp_test_...); the secret never leaves the server
+    order_id: str
+    amount: int  # paise (= cents), exactly what our database says the booking costs
+    currency: str
+    booking_id: int
+    name: str  # shown at the top of the window
+    description: str
+
+
+class RazorpayVerifyIn(BaseModel):
+    """The three values Razorpay's window hands back to the browser after a payment."""
+
+    razorpay_order_id: str = Field(min_length=1, max_length=60)
+    razorpay_payment_id: str = Field(min_length=1, max_length=60)
+    razorpay_signature: str = Field(min_length=1, max_length=200)
+
+
 class SplitCreate(BaseModel):
     friends: list[str] = Field(min_length=1, max_length=20)
     include_owner: bool = True

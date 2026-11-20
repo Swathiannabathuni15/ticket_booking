@@ -25,11 +25,13 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.config import settings
+from app.observability import error_body
 from app.redis_client import get_redis
 from app.security import decode_access_token
 from app.services import rate_limit
 
 EXEMPT_PREFIXES = ("/webhooks/", "/health", "/docs", "/openapi.json", "/redoc")
+VERSION_PREFIX = "/api/v1"
 
 
 def _user_id(scope: Scope) -> int | None:
@@ -46,7 +48,9 @@ class PerUserRateLimit:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] != "http" or scope["method"] == "OPTIONS" or scope["path"].startswith(EXEMPT_PREFIXES):
+        path = scope.get("path", "")
+        path = path.removeprefix(VERSION_PREFIX) if path.startswith(VERSION_PREFIX + "/") else path
+        if scope["type"] != "http" or scope["method"] == "OPTIONS" or path.startswith(EXEMPT_PREFIXES):
             return await self.app(scope, receive, send)
         uid = _user_id(scope)
         if uid is None:
@@ -59,7 +63,7 @@ class PerUserRateLimit:
                 rate_limit.check, factory(), f"user-sec:{uid}", settings.rate_limit_user_per_second, 1
             )
         except rate_limit.RateLimitExceeded as exc:
-            body = json.dumps({"detail": "Too many requests, slow down"}).encode()
+            body = json.dumps(error_body(429, "Too many requests, slow down")).encode()
             await send(
                 {
                     "type": "http.response.start",
@@ -67,7 +71,7 @@ class PerUserRateLimit:
                     "headers": [
                         (b"content-type", b"application/json"),
                         (b"content-length", str(len(body)).encode()),
-                        (b"retry-after", str(exc.retry_after_seconds).encode()),
+                        *((k.lower().encode(), v.encode()) for k, v in exc.headers().items()),
                     ],
                 }
             )

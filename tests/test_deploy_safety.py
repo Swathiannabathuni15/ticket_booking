@@ -16,6 +16,10 @@ def _prod(**over):
         cors_origin_regex="",
         gateway_allow_test_methods=False,
         public_base_url="https://tickets.example.com",
+        payment_provider="razorpay",
+        razorpay_key_id="rzp_test_x",
+        razorpay_key_secret="s",
+        razorpay_webhook_secret="w",
     )
     return Settings(_env_file=None, **{**base, **over})
 

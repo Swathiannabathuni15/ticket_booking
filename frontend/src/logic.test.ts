@@ -198,3 +198,13 @@ describe("dashboard axis and pricing helpers", () => {
     expect(toMinutes("")).toBeNull();
   });
 });
+
+import { withReference } from "./api";
+
+describe("withReference", () => {
+  it("adds the request id to server errors only", () => {
+    expect(withReference(500, "Oops.", { request_id: "3f2a9c1b77" })).toBe("Oops. (Reference: 3f2a9c1b)");
+    expect(withReference(404, "Not found.", { request_id: "3f2a9c1b77" })).toBe("Not found.");
+    expect(withReference(500, "Oops.", null)).toBe("Oops.");
+  });
+});
