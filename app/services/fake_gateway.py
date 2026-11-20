@@ -16,6 +16,7 @@ What a real provider guarantees, and this fake reproduces:
 Demo "cards" (payment_method): tok_ok = charges fine; tok_decline = card
 declined; tok_timeout = the bank CHARGES but our reply is lost (the nasty case).
 """
+
 import hashlib
 import hmac
 import json
@@ -46,6 +47,7 @@ class CardDeclined(Exception):
 
 # ---- the bank's API ------------------------------------------------------
 
+
 def charge(idempotency_key: str, amount_cents: int, method: str) -> GatewayCharge:
     with SessionLocal() as bank_db:  # the bank's own transaction
         existing = bank_db.query(GatewayCharge).filter_by(idempotency_key=idempotency_key).one_or_none()
@@ -55,8 +57,11 @@ def charge(idempotency_key: str, amount_cents: int, method: str) -> GatewayCharg
             return existing
         ok = method != "tok_decline"
         row = GatewayCharge(
-            charge_id="ch_" + secrets.token_hex(10), idempotency_key=idempotency_key, amount_cents=amount_cents,
-            status="succeeded" if ok else "failed", failure_reason=None if ok else "Your card was declined",
+            charge_id="ch_" + secrets.token_hex(10),
+            idempotency_key=idempotency_key,
+            amount_cents=amount_cents,
+            status="succeeded" if ok else "failed",
+            failure_reason=None if ok else "Your card was declined",
         )
         bank_db.add(row)
         try:
@@ -65,7 +70,7 @@ def charge(idempotency_key: str, amount_cents: int, method: str) -> GatewayCharg
             bank_db.rollback()
             first = bank_db.query(GatewayCharge).filter_by(idempotency_key=idempotency_key).one()
             if first.status == "failed":
-                raise CardDeclined(first.failure_reason or "Card declined")
+                raise CardDeclined(first.failure_reason or "Card declined") from None
             return first
         bank_db.refresh(row)
         event = build_event(row)
@@ -73,7 +78,7 @@ def charge(idempotency_key: str, amount_cents: int, method: str) -> GatewayCharg
         schedule_webhook(event)
         raise CardDeclined(row.failure_reason or "Card declined")
     if method == "tok_timeout":
-        schedule_webhook(event)       # the bank WILL tell us, even though this reply is lost
+        schedule_webhook(event)  # the bank WILL tell us, even though this reply is lost
         raise GatewayTimeout("no response from the bank")
     if settings.gateway_always_send_webhook:
         schedule_webhook(event)
@@ -95,13 +100,18 @@ def refund(idempotency_key: str) -> None:
 
 # ---- webhooks ------------------------------------------------------------
 
+
 def build_event(charge_row: GatewayCharge) -> dict:
     return {
         "id": "evt_" + secrets.token_hex(10),
         "type": "payment.succeeded" if charge_row.status == "succeeded" else "payment.failed",
-        "data": {"charge_id": charge_row.charge_id, "idempotency_key": charge_row.idempotency_key,
-                 "amount_cents": charge_row.amount_cents, "status": charge_row.status,
-                 "failure_reason": charge_row.failure_reason},
+        "data": {
+            "charge_id": charge_row.charge_id,
+            "idempotency_key": charge_row.idempotency_key,
+            "amount_cents": charge_row.amount_cents,
+            "status": charge_row.status,
+            "failure_reason": charge_row.failure_reason,
+        },
     }
 
 
@@ -132,20 +142,26 @@ def deliver_webhook(event: dict) -> bool:
     body = json.dumps(event).encode()
     for attempt in range(4):
         try:
-            r = httpx.post(settings.payment_webhook_url, content=body, timeout=5,
-                           headers={"Content-Type": "application/json", "X-Gateway-Signature": sign(body)})
+            r = httpx.post(
+                settings.payment_webhook_url,
+                content=body,
+                timeout=5,
+                headers={"Content-Type": "application/json", "X-Gateway-Signature": sign(body)},
+            )
             if r.status_code < 300:
                 return True
             log.warning("webhook %s got HTTP %s (attempt %s)", event["id"], r.status_code, attempt + 1)
         except httpx.HTTPError as exc:
             log.warning("webhook %s failed: %s (attempt %s)", event["id"], exc, attempt + 1)
-        time.sleep(min(2 ** attempt, 8))
+        time.sleep(min(2**attempt, 8))
     return False
 
 
 def schedule_webhook(event: dict) -> None:
     """Fire-and-forget delivery after a short delay. (Tests replace this.)"""
+
     def run():
         time.sleep(settings.gateway_webhook_delay_seconds)
         deliver_webhook(event)
+
     threading.Thread(target=run, daemon=True).start()

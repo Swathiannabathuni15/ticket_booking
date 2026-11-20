@@ -13,6 +13,7 @@ HONEST LIMITS
     - Email works with any SMTP account (a Gmail "app password" is the easy free
       route). It is tested against a local mail server, not a real inbox.
 """
+
 import logging
 import smtplib
 from email.message import EmailMessage
@@ -61,15 +62,21 @@ def send_sms(phone: str, code: str) -> None:
             data["MessagingServiceSid" if settings.twilio_from.startswith("MG") else "From"] = settings.twilio_from
             r = httpx.post(
                 f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
-                auth=(settings.twilio_account_sid, settings.twilio_auth_token), data=data, timeout=15,
+                auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+                data=data,
+                timeout=15,
             )
             ok = r.status_code in (200, 201)
         elif settings.otp_sms_provider == "msg91":
             r = httpx.post(
                 "https://control.msg91.com/api/v5/otp",
-                params={"template_id": settings.msg91_template_id, "mobile": phone.lstrip("+"),
-                        "authkey": settings.msg91_auth_key, "otp": code,
-                        "otp_expiry": max(1, settings.otp_ttl_seconds // 60)},
+                params={
+                    "template_id": settings.msg91_template_id,
+                    "mobile": phone.lstrip("+"),
+                    "authkey": settings.msg91_auth_key,
+                    "otp": code,
+                    "otp_expiry": max(1, settings.otp_ttl_seconds // 60),
+                },
                 timeout=15,
             )
             ok = r.status_code == 200 and r.json().get("type") == "success"
@@ -88,6 +95,11 @@ def send_email(address: str, code: str) -> None:
     msg["From"] = settings.smtp_from
     msg["To"] = address
     msg.set_content(_message(code))
+    smtp_send(msg)
+
+
+def smtp_send(msg: EmailMessage) -> None:
+    """Send one email with the SMTP settings. Also used for ticket confirmations."""
     try:
         smtp_cls = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
         with smtp_cls(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
@@ -97,5 +109,5 @@ def send_email(address: str, code: str) -> None:
                 smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.send_message(msg)
     except (OSError, smtplib.SMTPException) as exc:
-        log.warning("email delivery failed: %s", exc.__class__.__name__)   # class only: no addresses or passwords
+        log.warning("email delivery failed: %s", exc.__class__.__name__)  # class only: no addresses or passwords
         raise DeliveryFailed("could not send the email") from exc

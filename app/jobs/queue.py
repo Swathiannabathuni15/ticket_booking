@@ -5,6 +5,7 @@ rate limiting): this one serves a long-running background worker, where
 blocking is fine, and `is_async=False` lets tests run a job inline without a
 real worker process.
 """
+
 import redis
 from rq import Queue
 

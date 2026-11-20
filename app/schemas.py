@@ -1,5 +1,6 @@
 """Request and response shapes (validated by Pydantic)."""
-from datetime import datetime
+
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -19,7 +20,7 @@ class Credentials(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 (the OAuth word, not a secret)
 
 
 class UserOut(BaseModel):
@@ -32,6 +33,7 @@ class UserOut(BaseModel):
 
 class _OtpTarget(BaseModel):
     """Who the code is for: a phone number OR an email address (exactly one)."""
+
     phone: str | None = Field(default=None, pattern=r"^\+?[0-9]{10,15}$")
     email: EmailStr | None = None
 
@@ -52,8 +54,8 @@ class OtpRequest(_OtpTarget):
 
 class OtpRequestOut(BaseModel):
     sent: bool = True
-    channel: str = "screen"          # sms | email | screen (demo: no provider configured)
-    destination: str = ""            # masked, e.g. +91*****3210
+    channel: str = "screen"  # sms | email | screen (demo: no provider configured)
+    destination: str = ""  # masked, e.g. +91*****3210
     expires_in_seconds: int
     # ONLY in demo mode: the code, so the flow can be tried without a provider.
     dev_otp: str | None = None
@@ -70,16 +72,19 @@ class MovieCreate(BaseModel):
     genre: str = Field(default="", max_length=100)
     language: str = Field(default="English", max_length=50)
     rating: float | None = Field(default=None, ge=0, le=10)
+    release_date: date | None = None
 
 
 class MovieUpdate(BaseModel):
     """Admin edits. Only the fields you send are changed."""
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     duration_minutes: int | None = Field(default=None, gt=0, le=600)
     poster_url: str | None = Field(default=None, max_length=500, pattern=r"^https?://")
     genre: str | None = Field(default=None, max_length=100)
     language: str | None = Field(default=None, max_length=50)
     rating: float | None = Field(default=None, ge=0, le=10)
+    release_date: date | None = None
 
 
 class MovieOut(BaseModel):
@@ -91,6 +96,8 @@ class MovieOut(BaseModel):
     genre: str = ""
     language: str = "English"
     rating: float | None = None
+    release_date: date | None = None
+    status: str = "now_showing"  # now_showing | coming_soon
 
 
 class TheatreCreate(BaseModel):
@@ -145,6 +152,7 @@ class ShowtimeOut(BaseModel):
     theatre_name: str
     theatre_id: int
     city: str
+    price_note: str | None = None  # e.g. "Weekend +20%"
 
 
 class SeatOut(BaseModel):
@@ -199,6 +207,30 @@ class PaymentCreate(BaseModel):
     payment_method: str = Field(default="tok_ok", pattern="^tok_(ok|decline|timeout)$")
 
 
+class RazorpayOrderIn(BaseModel):
+    booking_id: int
+
+
+class RazorpayOrderOut(BaseModel):
+    """What the website needs to open the Razorpay payment window."""
+
+    key_id: str  # the PUBLIC key id (rzp_test_...); the secret never leaves the server
+    order_id: str
+    amount: int  # paise (= cents), exactly what our database says the booking costs
+    currency: str
+    booking_id: int
+    name: str  # shown at the top of the window
+    description: str
+
+
+class RazorpayVerifyIn(BaseModel):
+    """The three values Razorpay's window hands back to the browser after a payment."""
+
+    razorpay_order_id: str = Field(min_length=1, max_length=60)
+    razorpay_payment_id: str = Field(min_length=1, max_length=60)
+    razorpay_signature: str = Field(min_length=1, max_length=200)
+
+
 class SplitCreate(BaseModel):
     friends: list[str] = Field(min_length=1, max_length=20)
     include_owner: bool = True
@@ -237,6 +269,7 @@ class SplitOut(BaseModel):
 
 class ShareLinkView(BaseModel):
     """What a friend sees on the public link: no emails, no booking internals."""
+
     name: str
     amount_cents: int
     status: str
@@ -247,3 +280,185 @@ class ShareLinkView(BaseModel):
 
 class AdminBookingOut(BookingOut):
     user_id: int
+
+
+class BestShowOut(BaseModel):
+    """One show, and the best group of seats in it, for the seat finder."""
+
+    showtime_id: int
+    starts_at: datetime
+    movie_title: str
+    theatre_name: str
+    city: str
+    screen_name: str
+    seat_ids: list[int]
+    seat_labels: list[str]
+    seat_type: str
+    total_price: float
+    rows_from_screen: int
+    off_centre: float  # seats left (-) or right (+) of the middle
+    score: float  # lower is better
+
+
+class SeatOptionOut(BaseModel):
+    """One suggested group of seats, with the reasons."""
+
+    labels: list[str]  # Best view / Best value / Cheapest / Closest to your budget
+    seat_ids: list[int]
+    seat_labels: list[str]
+    seat_type: str
+    price_each: float
+    total_price: float
+    visibility: float  # 0-100, how well you would see the screen
+    screen_angle: int  # degrees of your view the screen fills
+    side_angle: int  # degrees off-centre
+    neck_angle: int  # degrees you look up to the top of the screen
+    rows_from_screen: int
+    off_centre: float  # seats left (-) / right (+) of the middle
+    across_aisle: bool
+    aisle_seat: bool
+    reasons: list[str]
+    warnings: list[str]
+    over_budget_by: float | None = None
+
+
+class SeatOptionsOut(BaseModel):
+    showtime_id: int
+    count: int
+    message: str | None = None  # explains an empty or compromised answer
+    options: list[SeatOptionOut]
+
+
+class TicketOut(BaseModel):
+    """The owner's e-ticket."""
+
+    booking_id: int
+    ticket_code: str
+    ticket_url: str  # what the QR code contains
+    qr_image: str  # a data: URI (SVG) to show the QR code
+    state: str  # valid | used | cancelled
+    movie_title: str
+    poster_url: str | None = None
+    theatre_name: str
+    city: str
+    screen_name: str
+    starts_at: datetime
+    ends_at: datetime
+    seat_labels: list[str]
+    total_cents: int
+    checked_in_at: datetime | None = None
+    directions_url: str
+
+
+class TicketPublicOut(BaseModel):
+    """What anyone holding a ticket's code may see: nothing about who bought it."""
+
+    ticket_code: str
+    state: str  # valid | used | cancelled
+    movie_title: str
+    poster_url: str | None = None
+    theatre_name: str
+    city: str
+    screen_name: str
+    starts_at: datetime
+    seat_labels: list[str]
+    checked_in_at: datetime | None = None
+
+
+class CheckInOut(BaseModel):
+    result: str  # admitted | already_used | cancelled | too_early | expired | invalid
+    message: str
+    ticket: TicketPublicOut | None = None
+
+
+class PricingRuleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    days: list[int] = Field(default_factory=list)  # Monday=0 .. Sunday=6; empty = every day
+    start_minute: int | None = Field(default=None, ge=0, le=1440)
+    end_minute: int | None = Field(default=None, ge=0, le=1440)
+    seat_type: str | None = Field(default=None, max_length=30)
+    percent: int = Field(ge=-90, le=200)
+    active: bool = True
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v: list[int]) -> list[int]:
+        if any(d not in range(7) for d in v):
+            raise ValueError("days are 0 (Monday) to 6 (Sunday)")
+        return sorted(set(v))
+
+    @field_validator("seat_type")
+    @classmethod
+    def _seat_type(cls, v: str | None) -> str | None:
+        return v.strip().lower() or None if v else None
+
+    @model_validator(mode="after")
+    def _window(self):
+        if (self.start_minute is None) != (self.end_minute is None):
+            raise ValueError("give both a start and an end time, or neither")
+        if self.start_minute is not None and self.start_minute == self.end_minute:
+            raise ValueError("the start and end time are the same")
+        if self.percent == 0:
+            raise ValueError("a 0% change does nothing")
+        return self
+
+
+class PricingRuleOut(PricingRuleIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    summary: str = ""
+
+
+class PricePreviewOut(BaseModel):
+    base: dict[str, float]
+    final: dict[str, float]
+    note: str | None
+
+
+class DayStat(BaseModel):
+    date: date
+    bookings: int
+    tickets: int
+    revenue_cents: int
+
+
+class ShowStat(BaseModel):
+    showtime_id: int
+    starts_at: datetime
+    movie_title: str
+    theatre_name: str
+    city: str
+    screen_name: str
+    seats_total: int
+    seats_sold: int
+    occupancy_percent: float
+    revenue_cents: int
+
+
+class MovieStat(BaseModel):
+    title: str
+    tickets: int
+    revenue_cents: int
+
+
+class StatTotals(BaseModel):
+    revenue_cents: int
+    bookings: int
+    tickets: int
+    avg_ticket_cents: int
+    occupancy_percent: float
+    shows: int
+    started: int  # bookings started in the window
+    abandoned: int  # ...that ended cancelled or expired
+    pending: int  # ...still waiting for payment
+
+
+class DashboardOut(BaseModel):
+    days: int
+    from_date: date
+    to_date: date
+    timezone: str
+    totals: StatTotals
+    per_day: list[DayStat]
+    shows: list[ShowStat]
+    top_movies: list[MovieStat]

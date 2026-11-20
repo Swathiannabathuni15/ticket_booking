@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, type Movie, type Showtime } from "../api";
 import { useCity } from "../city";
 import { DirectionsButton } from "../components/Directions";
+import SeatFinder from "../components/SeatFinder";
 import Poster from "../components/Poster";
 import { ErrorBanner, Loading } from "../components/ui";
 import { useLoad } from "../hooks";
@@ -41,7 +42,9 @@ export function MovieCard({ m, index = 0 }: { m: Movie; index?: number }) {
     <Link to={`/movies/${m.id}`} className="mcard" style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}>
       <div className="mcard-img">
         <Poster movie={m} />
-        {m.rating !== null && <div className="mcard-rate">★ {m.rating.toFixed(1)}/10</div>}
+        {m.status === "coming_soon" && m.release_date
+          ? <div className="mcard-soon">Releases {new Date(m.release_date + "T00:00").toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>
+          : m.rating !== null && <div className="mcard-rate">★ {m.rating.toFixed(1)}/10</div>}
       </div>
       <h3>{m.title}</h3>
       <p className="muted">{[m.genre, m.language].filter(Boolean).join(" • ")}</p>
@@ -51,7 +54,8 @@ export function MovieCard({ m, index = 0 }: { m: Movie; index?: number }) {
 
 export function MoviesPage({ search }: { search: string }) {
   const { city } = useCity();
-  const { data, error, loading } = useLoad(() => api.movies(city), [city]);
+  const { data, error, loading } = useLoad(() => api.movies(city, "now_showing"), [city]);
+  const soon = useLoad(() => api.movies(null, "coming_soon"), []);
   const shown = useMemo(() => (data ?? []).filter((m) => matches(m, search)), [data, search]);
   const languages = useMemo(() => [...new Set((data ?? []).map((m) => m.language))].sort(), [data]);
   const [lang, setLang] = useState<string | null>(null);
@@ -88,6 +92,12 @@ export function MoviesPage({ search }: { search: string }) {
           <div className="mgrid">{movies.map((m, i) => <MovieCard key={m.id} m={m} index={i} />)}</div>
         </section>
       ))}
+      {!search && !lang && (soon.data?.length ?? 0) > 0 && (
+        <section className="rise">
+          <h2 className="section">Coming soon<span className="count">{soon.data!.length}</span></h2>
+          <div className="mgrid">{soon.data!.map((m, i) => <MovieCard key={m.id} m={m} index={i} />)}</div>
+        </section>
+      )}
     </>
   );
 }
@@ -97,7 +107,7 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 export function MovieShowtimesPage() {
   const movieId = Number(useParams().id);
   const { city } = useCity();
-  const movie = useLoad(() => api.movies(null).then((all) => all.find((m) => m.id === movieId) ?? null), [movieId]);
+  const movie = useLoad(() => api.movie(movieId), [movieId]);
   const shows = useLoad(() => api.showtimes({ movieId, city }), [movieId, city]);
 
   const days = useMemo(() => {
@@ -132,8 +142,15 @@ export function MovieShowtimesPage() {
         </section>
       )}
       <ErrorBanner message={shows.error ?? movie.error} />
+      {mv?.status === "coming_soon" && mv.release_date && (
+        <div className="card soon-note">
+          <strong>Coming soon</strong>
+          <p className="muted">Releases on {new Date(mv.release_date + "T00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}. Booking opens when the first shows are scheduled.</p>
+        </div>
+      )}
       {shows.loading && !shows.data && <Loading />}
-      {!shows.loading && days.length === 0 && <p className="muted">No showtimes{city ? ` in ${city}` : ""} for this movie. Try another city.</p>}
+      {!shows.loading && days.length === 0 && mv?.status !== "coming_soon" && <p className="muted">No showtimes{city ? ` in ${city}` : ""} for this movie. Try another city.</p>}
+      {days.length > 0 && <SeatFinder movieId={movieId} />}
       <div className="daystrip">
         {days.map((d) => (
           <button key={dayKey(d)} className={`day ${activeDay === dayKey(d) ? "on" : ""}`} onClick={() => setDay(dayKey(d))}>

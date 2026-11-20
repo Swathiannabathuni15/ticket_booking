@@ -1,7 +1,10 @@
 """Movies, theatres and screens: admin-created catalogue data. Showtimes
 (which actually generate bookable seats) live in app/routers/showtimes.py.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+
+from datetime import UTC, date, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -35,16 +38,47 @@ def update_movie(
 
 
 @router.get("/movies", response_model=list[MovieOut])
-def list_movies(limit: int = 20, offset: int = 0, city: str | None = None, db: Session = Depends(get_db)):
-    """With ?city=X only movies that have a showtime in a theatre in that city."""
+def list_movies(
+    limit: int = 20,
+    offset: int = 0,
+    city: str | None = None,
+    status: str | None = Query(None, pattern="^(now_showing|coming_soon)$"),
+    db: Session = Depends(get_db),
+):
+    """With ?city=X only movies that have a show still to come in a theatre in that city.
+    ?status=now_showing hides movies with a future release date; ?status=coming_soon returns
+    only those (in every city: they have no shows yet)."""
     limit = max(1, min(limit, 100))
-    stmt = select(Movie).order_by(Movie.title).limit(limit).offset(max(offset, 0))
+    today = date.today()
+    stmt = (
+        select(Movie).order_by(Movie.release_date, Movie.title)
+        if status == "coming_soon"
+        else select(Movie).order_by(Movie.title)
+    )
+    stmt = stmt.limit(limit).offset(max(offset, 0))
+    if status == "coming_soon":
+        stmt = stmt.where(Movie.release_date > today)
+        return db.scalars(stmt).all()
+    if status == "now_showing":
+        stmt = stmt.where((Movie.release_date.is_(None)) | (Movie.release_date <= today))
     if city:
-        stmt = stmt.where(Movie.id.in_(
-            select(Showtime.movie_id).join(Screen, Screen.id == Showtime.screen_id)
-            .join(Theatre, Theatre.id == Screen.theatre_id).where(func.lower(Theatre.city) == city.lower())
-        ))
+        stmt = stmt.where(
+            Movie.id.in_(
+                select(Showtime.movie_id)
+                .join(Screen, Screen.id == Showtime.screen_id)
+                .join(Theatre, Theatre.id == Screen.theatre_id)
+                .where(func.lower(Theatre.city) == city.lower(), Showtime.starts_at > datetime.now(UTC))
+            )
+        )
     return db.scalars(stmt).all()
+
+
+@router.get("/movies/{movie_id}", response_model=MovieOut)
+def get_movie(movie_id: int, db: Session = Depends(get_db)):
+    movie = db.get(Movie, movie_id)
+    if movie is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Movie not found")
+    return movie
 
 
 @router.get("/cities", response_model=list[str])

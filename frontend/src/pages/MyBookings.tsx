@@ -30,6 +30,7 @@ export default function MyBookingsPage() {
             </div>
             <div className="actions">
               {b.status === "pending_payment" && <Link className="btn primary" to={`/checkout/${b.id}`}>Pay now</Link>}
+              {b.status === "confirmed" && <Link className="btn primary" to={`/bookings/${b.id}/ticket`}>🎟️ E-ticket</Link>}
               {b.status === "confirmed" && <DirectionsButton theatre={b.theatre_name} city={b.city} />}
               {b.status === "confirmed" && <Link className="btn" to={`/bookings/${b.id}/split`}>Split bill</Link>}
               {b.status !== "cancelled" && <button onClick={() => cancel(b.id)}>Cancel</button>}

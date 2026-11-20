@@ -8,6 +8,7 @@ bcrypt-bound and have their own rate limits; they aren't what this measures).
 The audit proves what matters: no seat has two active bookings, and every
 confirmed booking has exactly one payment.
 """
+
 import argparse
 import asyncio
 import random
@@ -58,13 +59,25 @@ async def user_flow(c: httpx.AsyncClient, token: str, showtime_id: int, out: dic
         r = await call(c, "POST holds", "POST", "/holds", json={"seat_ids": [seat]}, headers=h)
         if r is None or r.status_code != 201:
             continue
-        r = await call(c, "POST bookings", "POST", "/bookings", json={"seat_ids": [seat]},
-                       headers={**h, "Idempotency-Key": uuid.uuid4().hex})
+        r = await call(
+            c,
+            "POST bookings",
+            "POST",
+            "/bookings",
+            json={"seat_ids": [seat]},
+            headers={**h, "Idempotency-Key": uuid.uuid4().hex},
+        )
         if r is None or r.status_code != 201:
             return
         bid = r.json()["id"]
-        r = await call(c, "POST payments", "POST", "/payments", json={"booking_id": bid},
-                       headers={**h, "Idempotency-Key": uuid.uuid4().hex})
+        r = await call(
+            c,
+            "POST payments",
+            "POST",
+            "/payments",
+            json={"booking_id": bid},
+            headers={**h, "Idempotency-Key": uuid.uuid4().hex},
+        )
         if r is not None and r.status_code == 201:
             out["paid"] += 1
         return
@@ -118,21 +131,34 @@ async def main():
         theatre = (await c.post("/theatres", json={"name": "Load", "city": "X"}, headers=adm)).json()
         cols = 10
         rows = [{"row": chr(65 + i), "seats": ["standard"] * cols} for i in range((a.seats + cols - 1) // cols)]
-        screen = (await c.post("/screens", json={"theatre_id": theatre["id"], "name": "L", "rows": rows}, headers=adm)).json()
-        st = (await c.post("/showtimes", json={"movie_id": movie["id"], "screen_id": screen["id"],
-              "starts_at": "2031-01-01T18:00:00", "prices": {"standard": 10}}, headers=adm)).json()
+        screen = (
+            await c.post("/screens", json={"theatre_id": theatre["id"], "name": "L", "rows": rows}, headers=adm)
+        ).json()
+        st = (
+            await c.post(
+                "/showtimes",
+                json={
+                    "movie_id": movie["id"],
+                    "screen_id": screen["id"],
+                    "starts_at": "2031-01-01T18:00:00",
+                    "prices": {"standard": 10},
+                },
+                headers=adm,
+            )
+        ).json()
         sid = st["id"]
 
     import concurrent.futures as cf
     import multiprocessing as mp
-    shards = [(a.base, a.conns // a.procs + 1, sid, tokens[i::a.procs], a.ramp) for i in range(a.procs)]
+
+    shards = [(a.base, a.conns // a.procs + 1, sid, tokens[i :: a.procs], a.ramp) for i in range(a.procs)]
     out = {"paid": 0, "sold_out": 0}
     t0 = time.perf_counter()
     with cf.ProcessPoolExecutor(a.procs, mp_context=mp.get_context("fork")) as ex:
-        for o, l, cd in ex.map(_shard, shards):
+        for o, lats, cd in ex.map(_shard, shards):
             for k in out:
                 out[k] += o[k]
-            for name, xs in l.items():
+            for name, xs in lats.items():
                 lat[name].extend(xs)
             for name, d in cd.items():
                 for code, n in d.items():
@@ -140,25 +166,44 @@ async def main():
     wall = time.perf_counter() - t0
 
     total_reqs = sum(len(v) for v in lat.values())
-    print(f"\n{a.users} users, {a.seats} seats, {wall:.1f}s wall, {total_reqs} requests ({total_reqs / wall:.0f} req/s)\n")
+    print(
+        f"\n{a.users} users, {a.seats} seats, {wall:.1f}s wall, {total_reqs} requests ({total_reqs / wall:.0f} req/s)\n"
+    )
     print(f"{'endpoint':<14}{'count':>7}{'p50 ms':>9}{'p95 ms':>9}{'p99 ms':>9}  status codes")
     for name, xs in lat.items():
-        print(f"{name:<14}{len(xs):>7}{statistics.median(xs):>9.0f}{pct(xs, .95):>9.0f}{pct(xs, .99):>9.0f}  {dict(codes[name])}")
+        print(
+            f"{name:<14}{len(xs):>7}{statistics.median(xs):>9.0f}{pct(xs, .95):>9.0f}{pct(xs, .99):>9.0f}  {dict(codes[name])}"
+        )
     allx = [x for xs in lat.values() for x in xs]
     print(f"{'ALL':<14}{len(allx):>7}{statistics.median(allx):>9.0f}{pct(allx, .95):>9.0f}{pct(allx, .99):>9.0f}")
 
     with SessionLocal() as db:
-        dup = db.execute(text(
-            "SELECT count(*) FROM (SELECT showtime_seat_id FROM booking_seats bs JOIN showtime_seats s "
-            "ON s.id = bs.showtime_seat_id WHERE s.showtime_id = :sid AND bs.status IN ('pending_payment','confirmed') "
-            "GROUP BY showtime_seat_id HAVING count(*) > 1) q"), {"sid": sid}).scalar()
-        confirmed = db.execute(text("SELECT count(*) FROM bookings WHERE showtime_id = :sid AND status = 'confirmed'"), {"sid": sid}).scalar()
-        payments = db.execute(text("SELECT count(*) FROM payments p JOIN bookings b ON b.id = p.booking_id WHERE b.showtime_id = :sid"), {"sid": sid}).scalar()
-        seats_taken = db.execute(text(
-            "SELECT count(DISTINCT showtime_seat_id) FROM booking_seats bs JOIN showtime_seats s ON s.id = bs.showtime_seat_id "
-            "WHERE s.showtime_id = :sid AND bs.status IN ('pending_payment','confirmed')"), {"sid": sid}).scalar()
-    print(f"\nAUDIT  seats with >1 active booking: {dup}   confirmed bookings: {confirmed}   payments: {payments}   "
-          f"distinct seats taken: {seats_taken}/{a.seats}   users who paid: {out['paid']}")
+        dup = db.execute(
+            text(
+                "SELECT count(*) FROM (SELECT showtime_seat_id FROM booking_seats bs JOIN showtime_seats s "
+                "ON s.id = bs.showtime_seat_id WHERE s.showtime_id = :sid AND bs.status IN ('pending_payment','confirmed') "
+                "GROUP BY showtime_seat_id HAVING count(*) > 1) q"
+            ),
+            {"sid": sid},
+        ).scalar()
+        confirmed = db.execute(
+            text("SELECT count(*) FROM bookings WHERE showtime_id = :sid AND status = 'confirmed'"), {"sid": sid}
+        ).scalar()
+        payments = db.execute(
+            text("SELECT count(*) FROM payments p JOIN bookings b ON b.id = p.booking_id WHERE b.showtime_id = :sid"),
+            {"sid": sid},
+        ).scalar()
+        seats_taken = db.execute(
+            text(
+                "SELECT count(DISTINCT showtime_seat_id) FROM booking_seats bs JOIN showtime_seats s ON s.id = bs.showtime_seat_id "
+                "WHERE s.showtime_id = :sid AND bs.status IN ('pending_payment','confirmed')"
+            ),
+            {"sid": sid},
+        ).scalar()
+    print(
+        f"\nAUDIT  seats with >1 active booking: {dup}   confirmed bookings: {confirmed}   payments: {payments}   "
+        f"distinct seats taken: {seats_taken}/{a.seats}   users who paid: {out['paid']}"
+    )
     ok = dup == 0 and confirmed == payments == out["paid"] and seats_taken <= a.seats
     print("RESULT:", "PASS - zero double bookings" if ok else "FAIL")
     sys.exit(0 if ok else 1)

@@ -22,10 +22,20 @@ BOOKING AND THE DOUBLE-BOOKING GUARD
     the price of getting the real backstop (Layer 2: a DB constraint that
     holds even if the app logic above it has a bug) on a child table.
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
-    JSON, Boolean, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint, text,
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,7 +43,7 @@ from app.db import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -59,7 +69,13 @@ class Movie(Base):
     genre: Mapped[str] = mapped_column(String(100), default="", server_default="")
     language: Mapped[str] = mapped_column(String(50), default="English", server_default="English")
     rating: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    # Not set = already showing. A date in the future = "coming soon" (not bookable yet).
+    release_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    @property
+    def status(self) -> str:
+        return "coming_soon" if self.release_date and self.release_date > date.today() else "now_showing"
 
 
 class Theatre(Base):
@@ -83,6 +99,7 @@ class Screen(Base):
     aisle after seat 6" just from the seat numbers present, without a
     separate x/y field.
     """
+
     __tablename__ = "screens"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -101,13 +118,24 @@ class Showtime(Base):
     afterwards does not retroactively change already-generated seats -
     same reasoning as a Seat's price not changing after it exists today.
     """
+
     __tablename__ = "showtimes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"), index=True)
-    screen_id: Mapped[int] = mapped_column(ForeignKey("screens.id"), index=True)
+    # Indexes: (movie, time) for a movie's upcoming shows, (screen, time) for the schedule's overlap
+    # check, and time alone for "what's on in this window" (listings, dashboard).
+    __table_args__ = (
+        Index("ix_showtimes_movie_starts", "movie_id", "starts_at"),
+        Index("ix_showtimes_screen_starts", "screen_id", "starts_at"),
+        Index("ix_showtimes_starts_at", "starts_at"),
+    )
+
+    movie_id: Mapped[int] = mapped_column(ForeignKey("movies.id"))
+    screen_id: Mapped[int] = mapped_column(ForeignKey("screens.id"))
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    prices: Mapped[dict] = mapped_column(JSON)
+    prices: Mapped[dict] = mapped_column(JSON)  # the BASE prices; seats carry the final ones
+    # Which pricing rules changed the seat prices, e.g. "Weekend +20%". None = base prices.
+    price_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     movie: Mapped[Movie] = relationship()
@@ -140,13 +168,14 @@ class ShowtimeSeat(Base):
     seat_number)` is unique - the same identity a real showtime seat map has.
     This is the row `SELECT ... FOR UPDATE` locks during booking (Layer 1).
     """
+
     __tablename__ = "showtime_seats"
-    __table_args__ = (
-        UniqueConstraint("showtime_id", "row_label", "seat_number", name="uq_seat_per_showtime"),
-    )
+    # The unique (showtime, row, seat) index also serves "all seats of a showtime" (its first column),
+    # so there is no separate showtime_id index to keep up to date on this, the biggest table.
+    __table_args__ = (UniqueConstraint("showtime_id", "row_label", "seat_number", name="uq_seat_per_showtime"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    showtime_id: Mapped[int] = mapped_column(ForeignKey("showtimes.id"), index=True)
+    showtime_id: Mapped[int] = mapped_column(ForeignKey("showtimes.id"))
     row_label: Mapped[str] = mapped_column(String(5))
     seat_number: Mapped[int] = mapped_column()
     seat_type: Mapped[str] = mapped_column(String(20))
@@ -166,10 +195,15 @@ class Booking(Base):
     background job once `payment_due_at` passes unpaid (see
     app/services/payment_service.py and app/jobs/).
     """
+
     __tablename__ = "bookings"
     __table_args__ = (
         # Same user + same idempotency key = same booking (safe retries).
         UniqueConstraint("user_id", "idempotency_key", name="uq_user_idempotency_key"),
+        # Small partial indexes for the background jobs and the dashboard: they only hold the rows
+        # those queries look for, so they stay tiny and cheap however many bookings there are.
+        Index("ix_bookings_unpaid_due", "payment_due_at", postgresql_where=text("status = 'pending_payment'")),
+        Index("ix_bookings_paid_at", "paid_at", postgresql_where=text("status = 'confirmed'")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -184,6 +218,11 @@ class Booking(Base):
     payment_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # E-ticket (app/services/ticket_service.py): a random code issued when the booking is paid.
+    # The QR code on the ticket points at it; scanning it at the door marks the ticket used.
+    ticket_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmation_emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     seats: Mapped[list["BookingSeat"]] = relationship(back_populates="booking")
 
@@ -195,7 +234,9 @@ class Booking(Base):
         """paid | processing (a charge is in flight / webhook awaited) | failed | unpaid"""
         if self.status == "confirmed":
             return "paid"
-        if any(a.status == "pending" for a in self.attempts):
+        # Only the simulated bank has a "charge in flight". A Razorpay attempt is "pending" from the moment
+        # the order is created, i.e. while the customer is still choosing how to pay: that is "unpaid".
+        if any(a.status == "pending" and a.provider == "simulated" for a in self.attempts):
             return "processing"
         if self.attempts and self.attempts[-1].status == "failed":
             return "failed"
@@ -239,6 +280,7 @@ class BookingSeat(Base):
     double-booking a seat, independent of whether the app code above it
     (booking_service.book_seat's row lock) has a bug.
     """
+
     __tablename__ = "booking_seats"
     __table_args__ = (
         Index(
@@ -266,6 +308,7 @@ class Payment(Base):
     the same role the partial unique index on booking_seats plays against
     double booking a seat - see payment_service.pay_booking.
     """
+
     __tablename__ = "payments"
     __table_args__ = (
         # Same user + same idempotency key = same payment (safe retries).
@@ -285,6 +328,7 @@ class BillSplit(Base):
     the shares can be made to add up to the total exactly.
     status: open | settled (every share paid) | cancelled
     """
+
     __tablename__ = "bill_splits"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -294,9 +338,7 @@ class BillSplit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     booking: Mapped[Booking] = relationship()
-    shares: Mapped[list["SplitShare"]] = relationship(
-        back_populates="split", order_by="SplitShare.id"
-    )
+    shares: Mapped[list["SplitShare"]] = relationship(back_populates="split", order_by="SplitShare.id")
 
 
 class SplitShare(Base):
@@ -304,6 +346,7 @@ class SplitShare(Base):
     link; changing it would invalidate every link already handed out.
     status: unpaid | paid | cancelled
     """
+
     __tablename__ = "split_shares"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -324,6 +367,7 @@ class LedgerEntry(Base):
     the same pattern as payments.booking_id.
     kind: payment | refund
     """
+
     __tablename__ = "ledger_entries"
     __table_args__ = (UniqueConstraint("share_id", "kind", name="uq_ledger_share_kind"),)
 
@@ -342,8 +386,12 @@ class PaymentAttempt(Base):
     keys can never collide there.
     status: pending | succeeded | failed | refunded
     """
+
     __tablename__ = "payment_attempts"
-    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_attempt_user_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_attempt_user_key"),
+        Index("ix_attempts_pending_created", "created_at", postgresql_where=text("status = 'pending'")),  # sweeper
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), index=True)
@@ -352,6 +400,12 @@ class PaymentAttempt(Base):
     gateway_key: Mapped[str] = mapped_column(String(140), unique=True)
     amount_cents: Mapped[int] = mapped_column()
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Who handled the money: "simulated" or "razorpay". Decides where a refund goes.
+    provider: Mapped[str] = mapped_column(String(20), default="simulated", server_default="simulated")
+    # Razorpay's ORDER id ("order_..."), saved BEFORE the customer sees the payment window. UNIQUE, so one
+    # order belongs to exactly one attempt, and a webhook can always be matched back to it.
+    gateway_order_id: Mapped[str | None] = mapped_column(String(60), unique=True, nullable=True)
+    # The bank's payment id ("pay_..." for Razorpay), set when the money moved. Used to refund.
     charge_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -364,6 +418,7 @@ class GatewayCharge(Base):
     show what a bank does: one charge per idempotency key, ever.
     status: succeeded | failed | refunded
     """
+
     __tablename__ = "gateway_charges"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -378,6 +433,7 @@ class GatewayCharge(Base):
 class WebhookEvent(Base):
     """Every webhook event id we have processed. UNIQUE(event_id) is what makes
     a re-delivered webhook (banks retry!) harmless."""
+
     __tablename__ = "webhook_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -390,6 +446,7 @@ class PushSubscription(Base):
     """One browser/phone that agreed to get notifications (Web Push). `endpoint`
     is the push service's address for that device and is unique; p256dh/auth
     are the keys used to encrypt messages to it."""
+
     __tablename__ = "push_subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -403,8 +460,29 @@ class PushSubscription(Base):
 class ReminderSent(Base):
     """One row per booking whose "starts soon" reminder was sent. UNIQUE
     booking_id is what stops a second worker (or a re-run) sending it twice."""
+
     __tablename__ = "reminders_sent"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id"), unique=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PricingRule(Base):
+    """A price change for shows at certain times, e.g. "Weekend +20%" or "Morning -15%".
+    Rules are applied when a showtime is CREATED (app/services/pricing_service.py), so a price a
+    customer has seen never changes under them. Several matching rules add up."""
+
+    __tablename__ = "pricing_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    # Days of the week it applies on, Monday=0 .. Sunday=6. Empty = every day.
+    days: Mapped[list] = mapped_column(JSON, default=list)
+    # Local start-time window in minutes after midnight [start, end). None = any time.
+    start_minute: Mapped[int | None] = mapped_column(nullable=True)
+    end_minute: Mapped[int | None] = mapped_column(nullable=True)
+    seat_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # None = every seat type
+    percent: Mapped[int] = mapped_column()  # +20 = 20% dearer, -15 = 15% cheaper
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

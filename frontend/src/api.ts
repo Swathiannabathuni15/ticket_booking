@@ -15,6 +15,8 @@ export function apiBase(env: string | undefined = import.meta.env.VITE_API_URL, 
   return `${loc.protocol}//${loc.hostname}:8000`;
 }
 const BASE = typeof window === "undefined" ? "http://localhost:8000" : apiBase();  // no window in unit tests
+/** All endpoints are versioned: a future incompatible API change goes to /api/v2 without breaking this site. */
+const API = `${BASE}/api/v1`;
 const TOKEN_KEY = "tb_token";
 
 export const tokenStore = {
@@ -48,6 +50,12 @@ export function friendlyMessage(status: number, detail: string, retryAfter?: num
   }
 }
 
+/** On a server error, add the request id the server logged it under, so a report can be traced. */
+export function withReference(status: number, message: string, body: unknown): string {
+  const rid = (body as { request_id?: unknown } | null)?.request_id;
+  return status >= 500 && typeof rid === "string" && rid !== "-" ? `${message} (Reference: ${rid.slice(0, 8)})` : message;
+}
+
 function detailOf(body: unknown): string {
   const d = (body as { detail?: unknown } | null)?.detail;
   if (typeof d === "string") return d;
@@ -67,7 +75,7 @@ export async function request<T>(
 
   let res: Response;
   try {
-    res = await fetch(BASE + path, {
+    res = await fetch(API + path, {
       method,
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -83,7 +91,7 @@ export async function request<T>(
       tokenStore.clear();
       window.dispatchEvent(new Event(SESSION_EXPIRED));
     }
-    throw new ApiError(res.status, friendlyMessage(res.status, detailOf(body), retry), retry);
+    throw new ApiError(res.status, withReference(res.status, friendlyMessage(res.status, detailOf(body), retry), body), retry);
   }
   return body as T;
 }
@@ -104,6 +112,10 @@ export function uuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 /** Demo cards: the bank approves, declines, or charges but the reply is lost. */
+/** What the payment window needs. key_id is the PUBLIC key; the amount is what the server says the booking costs. */
+export type RazorpayOrder = {
+  key_id: string; order_id: string; amount: number; currency: string; booking_id: number; name: string; description: string;
+};
 export type PayMethod = "tok_ok" | "tok_decline" | "tok_timeout";
 
 // ---- types ----
@@ -119,12 +131,14 @@ export type User = { id: number; email: string | null; phone: string | null; is_
 export type Movie = {
   id: number; title: string; duration_minutes: number;
   poster_url: string | null; genre: string; language: string; rating: number | null;
+  release_date: string | null; status: "now_showing" | "coming_soon";
 };
 export type Theatre = { id: number; name: string; city: string };
 export type Screen = { id: number; theatre_id: number; name: string; layout: unknown[] };
 export type Showtime = {
   id: number; movie_id: number; screen_id: number; starts_at: string;
   movie_title: string; screen_name: string; theatre_name: string; theatre_id: number; city: string;
+  price_note?: string | null;   // e.g. "Weekend +20%"
 };
 export type SeatStatus = "available" | "held" | "held_by_me" | "booked";
 export type Seat = {
@@ -138,6 +152,25 @@ export type Booking = {
   payment_status: "paid" | "processing" | "failed" | "unpaid";
   created_at: string; payment_due_at: string | null; paid_at: string | null; user_id?: number;
 };
+export type SeatOption = {
+  labels: string[];                 // Best view / Best value / Cheapest / Also good / Closest to your budget
+  seat_ids: number[]; seat_labels: string[]; seat_type: string;
+  price_each: number; total_price: number;
+  visibility: number;               // 0-100: how well you would see the screen
+  screen_angle: number; side_angle: number; neck_angle: number; rows_from_screen: number; off_centre: number;
+  across_aisle: boolean; aisle_seat: boolean;
+  reasons: string[]; warnings: string[]; over_budget_by: number | null;
+};
+export type SeatOptions = { showtime_id: number; count: number; message: string | null; options: SeatOption[] };
+export type BestShow = {
+  showtime_id: number; starts_at: string; movie_title: string; theatre_name: string; city: string; screen_name: string;
+  seat_ids: number[]; seat_labels: string[]; seat_type: string; total_price: number;
+  rows_from_screen: number; off_centre: number; score: number;
+};
+export type FinderFilters = {
+  count: number; city?: string | null; centre_only?: boolean; not_too_close?: boolean;
+  max_price?: number; time_of_day?: string;
+};
 export type Share = {
   id: number; name: string; amount_cents: number; is_owner: boolean;
   status: "unpaid" | "paid" | "cancelled"; paid_at: string | null; link: string | null;
@@ -149,6 +182,65 @@ export type ShareView = {
   name: string; amount_cents: number; status: string; movie_title: string; starts_at: string; seats: string[];
 };
 
+export type TicketState = "valid" | "used" | "cancelled";
+export type TicketPublic = {
+  ticket_code: string; state: TicketState; movie_title: string; poster_url: string | null;
+  theatre_name: string; city: string; screen_name: string; starts_at: string; seat_labels: string[];
+  checked_in_at: string | null;
+};
+export type Ticket = TicketPublic & {
+  booking_id: number; ticket_url: string; qr_image: string; ends_at: string; total_cents: number; directions_url: string;
+};
+export type CheckInResult = "admitted" | "already_used" | "cancelled" | "too_early" | "expired" | "invalid";
+export type CheckIn = { result: CheckInResult; message: string; ticket: TicketPublic | null };
+
+/** Download a file that needs the sign-in token (a plain <a href> can't send it). */
+export async function downloadWithAuth(path: string, filename: string): Promise<void> {
+  const token = tokenStore.get();
+  let res: Response;
+  try {
+    res = await fetch(API + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    throw new ApiError(0, "Can't reach the server. Check your connection and try again.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, friendlyMessage(res.status, detailOf(body)));
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** What a scanned QR code (or typed text) says, as a ticket code: "…/ticket/ABCD-EFGH-JKLM" or "abcd efgh jklm". */
+export function ticketCodeFrom(text: string): string | null {
+  const fromUrl = text.match(/\/ticket\/([A-Za-z0-9-]+)/);
+  const raw = (fromUrl ? fromUrl[1] : text).replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/.test(raw)) return null;
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+}
+
+export type DayStat = { date: string; bookings: number; tickets: number; revenue_cents: number };
+export type ShowStat = {
+  showtime_id: number; starts_at: string; movie_title: string; theatre_name: string; city: string; screen_name: string;
+  seats_total: number; seats_sold: number; occupancy_percent: number; revenue_cents: number;
+};
+export type Dashboard = {
+  days: number; from_date: string; to_date: string; timezone: string;
+  totals: {
+    revenue_cents: number; bookings: number; tickets: number; avg_ticket_cents: number; occupancy_percent: number;
+    shows: number; started: number; abandoned: number; pending: number;
+  };
+  per_day: DayStat[]; shows: ShowStat[]; top_movies: { title: string; tickets: number; revenue_cents: number }[];
+};
+export type PricingRuleIn = {
+  name: string; days: number[]; start_minute: number | null; end_minute: number | null;
+  seat_type: string | null; percent: number; active: boolean;
+};
+export type PricingRule = PricingRuleIn & { id: number; summary: string };
+export type PricePreview = { base: Record<string, number>; final: Record<string, number>; note: string | null };
+
 // ---- endpoints ----
 export const api = {
   signup: (email: string, password: string) =>
@@ -156,20 +248,42 @@ export const api = {
   login: (email: string, password: string) =>
     request<{ access_token: string }>("POST", "/auth/login", { body: { email, password }, auth: false }),
   me: () => request<User>("GET", "/me"),
+  logout: () => request<void>("POST", "/auth/logout"),
+  config: () => request<{ test_cards: boolean; payment_provider: "simulated" | "razorpay" }>("GET", "/config", { auth: false }),
+  razorpayOrder: (bookingId: number, key: string) =>
+    request<RazorpayOrder>("POST", "/payments/razorpay/order", { body: { booking_id: bookingId }, headers: { "Idempotency-Key": key } }),
+  razorpayVerify: (v: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+    request<Booking>("POST", "/payments/razorpay/verify", { body: v }),
   refresh: () => request<{ access_token: string }>("POST", "/auth/refresh"),
   otpRequest: (target: OtpTarget) =>
     request<OtpSent>("POST", "/auth/otp/request", { body: target, auth: false }),
   otpVerify: (target: OtpTarget, code: string) =>
     request<{ access_token: string }>("POST", "/auth/otp/verify", { body: { ...target, code }, auth: false }),
   cities: () => request<string[]>("GET", "/cities", { auth: false }),
-  movies: (city?: string | null) =>
-    request<Movie[]>("GET", `/movies?limit=100${city ? `&city=${encodeURIComponent(city)}` : ""}`, { auth: false }),
+  movies: (city?: string | null, status?: "now_showing" | "coming_soon") =>
+    request<Movie[]>("GET", `/movies?limit=100${city ? `&city=${encodeURIComponent(city)}` : ""}${status ? `&status=${status}` : ""}`, { auth: false }),
+  movie: (id: number) => request<Movie>("GET", `/movies/${id}`, { auth: false }),
   showtimes: (opts: { movieId?: number; city?: string | null } = {}) =>
     request<Showtime[]>(
       "GET",
       `/showtimes?limit=100${opts.movieId ? `&movie_id=${opts.movieId}` : ""}${opts.city ? `&city=${encodeURIComponent(opts.city)}` : ""}`,
       { auth: false },
     ),
+  bestShows: (movieId: number, f: FinderFilters) => {
+    const q = new URLSearchParams({ count: String(f.count), limit: "8" });
+    if (f.city) q.set("city", f.city);
+    if (f.centre_only) q.set("centre_only", "true");
+    if (f.not_too_close) q.set("not_too_close", "true");
+    if (f.max_price) q.set("max_price", String(f.max_price));
+    if (f.time_of_day) q.set("time_of_day", f.time_of_day);
+    return request<BestShow[]>("GET", `/movies/${movieId}/best-seats?${q}`);
+  },
+  seatOptions: (showtimeId: number, f: { count: number; max_total?: number; prefer_aisle?: boolean }) => {
+    const q = new URLSearchParams({ count: String(f.count) });
+    if (f.max_total) q.set("max_total", String(f.max_total));
+    if (f.prefer_aisle) q.set("prefer_aisle", "true");
+    return request<SeatOptions>("GET", `/showtimes/${showtimeId}/seat-options?${q}`);
+  },
   showtime: (id: number) => request<Showtime>("GET", `/showtimes/${id}`, { auth: false }),
   bestSeats: (showtimeId: number, count: number, seatType?: string) =>
     request<Seat[]>("GET", `/showtimes/${showtimeId}/best-seats?count=${count}${seatType ? `&seat_type=${seatType}` : ""}`),
@@ -200,7 +314,19 @@ export const api = {
     request<{ subscribed: boolean }>("POST", "/push/subscribe", { body: sub }),
   pushUnsubscribe: (endpoint: string) => request<{ subscribed: boolean }>("DELETE", "/push/subscribe", { body: { endpoint } }),
   pushTest: () => request<{ sent: number }>("POST", "/push/test"),
+  ticket: (bookingId: number) => request<Ticket>("GET", `/bookings/${bookingId}/ticket`),
+  emailTicket: (bookingId: number) => request<{ sent_to: string }>("POST", `/bookings/${bookingId}/ticket/email`),
+  ticketCalendar: (bookingId: number) => downloadWithAuth(`/bookings/${bookingId}/ticket.ics`, `ticket-${bookingId}.ics`),
+  publicTicket: (code: string) => request<TicketPublic>("GET", `/tickets/${encodeURIComponent(code)}`, { auth: false }),
+  checkIn: (code: string) => request<CheckIn>("POST", `/tickets/${encodeURIComponent(code)}/check-in`),
   // admin
+  dashboard: (days: number) => request<Dashboard>("GET", `/admin/dashboard?days=${days}`),
+  pricingRules: () => request<PricingRule[]>("GET", "/admin/pricing-rules"),
+  createPricingRule: (body: PricingRuleIn) => request<PricingRule>("POST", "/admin/pricing-rules", { body }),
+  updatePricingRule: (id: number, body: PricingRuleIn) => request<PricingRule>("PUT", `/admin/pricing-rules/${id}`, { body }),
+  deletePricingRule: (id: number) => request<void>("DELETE", `/admin/pricing-rules/${id}`),
+  pricePreview: (screenId: number, startsAt: string) =>
+    request<PricePreview>("GET", `/admin/pricing-rules/preview?screen_id=${screenId}&starts_at=${encodeURIComponent(startsAt)}`),
   adminBookings: (status?: string) =>
     request<Booking[]>("GET", `/admin/bookings?limit=200${status ? `&status=${status}` : ""}`),
   screens: () => request<Screen[]>("GET", "/screens", { auth: false }),

@@ -4,8 +4,9 @@ Holding several seats at once (one order) is all-or-nothing: see
 app/services/hold_service.py's module docstring for why that needs a single
 Lua script rather than a loop of single-seat acquires.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+
 import redis
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,35 +56,18 @@ def create_hold(
     if already_booked:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Seat(s) already booked: {sorted(already_booked)}")
 
-    # Cumulative cap per showtime: the per-request limit (max 8 seat_ids,
-    # enforced by HoldCreate) only bounds one call - without this, someone
-    # could call /holds repeatedly to pile up far more holds on the same
-    # showtime over time. Grouped by showtime because a single request can
-    # technically mix seats from different showtimes (booking rejects that
-    # later; holding doesn't need to).
-    requested_by_showtime: dict[int, list[int]] = {}
-    for sid in seat_ids:
-        requested_by_showtime.setdefault(seat_showtime[sid], []).append(sid)
+    # Also capped in TOTAL per showtime (MAX_HELD_SEATS_PER_SHOWTIME), across however many calls it
+    # takes - checked inside the same atomic Redis step that takes the seats, so two requests sent at
+    # once cannot both slip under the limit.
     try:
-        for showtime_id, requested in requested_by_showtime.items():
-            all_seat_ids_for_showtime = db.scalars(
-                select(ShowtimeSeat.id).where(ShowtimeSeat.showtime_id == showtime_id)
-            ).all()
-            currently_held = holds.seats_held_by_user(r, all_seat_ids_for_showtime, user.id)
-            net_after = (currently_held - set(requested)) | set(requested)
-            if len(net_after) > settings.max_held_seats_per_showtime:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"Cannot hold more than {settings.max_held_seats_per_showtime} seats "
-                    "at once on one showtime",
-                )
-    except holds.HoldUnavailable:
-        _unavailable()
-
-    try:
-        result = holds.acquire_holds(r, seat_ids, user.id)
+        result = holds.acquire_holds(r, seat_ids, user.id, seat_showtime)
     except holds.SeatHeldByOther as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat {exc.args[0]} is held by another user")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Seat {exc.args[0]} is held by another user") from exc
+    except holds.HoldCapExceeded:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot hold more than {settings.max_held_seats_per_showtime} seats at once on one showtime",
+        ) from None
     except holds.HoldUnavailable:
         _unavailable()
     return HoldOut(seat_ids=result["seat_ids"], ttl_seconds=result["ttl_seconds"])

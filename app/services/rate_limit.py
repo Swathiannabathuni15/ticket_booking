@@ -22,8 +22,10 @@ FAIL OPEN
     hold_service - because there the cost of failing open is a double
     booking, not just a bit of extra load.)
 """
+
 import logging
 import time
+from dataclasses import dataclass
 
 import redis
 
@@ -31,21 +33,45 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimitExceeded(Exception):
-    def __init__(self, retry_after_seconds: int):
+    def __init__(self, retry_after_seconds: int, limit: int = 0):
         self.retry_after_seconds = retry_after_seconds
+        self.limit = limit
+
+    def headers(self) -> dict[str, str]:
+        return {
+            "Retry-After": str(self.retry_after_seconds),
+            **RateLimitStatus(self.limit, 0, self.retry_after_seconds).headers(),
+        }
 
 
-def check(r: redis.Redis, key: str, limit: int, window_seconds: int) -> None:
+@dataclass
+class RateLimitStatus:
+    limit: int
+    remaining: int
+    reset_seconds: int  # until this window ends
+
+    def headers(self) -> dict[str, str]:
+        """The standard rate-limit headers (IETF draft "RateLimit header fields")."""
+        return {
+            "RateLimit-Limit": str(self.limit),
+            "RateLimit-Remaining": str(self.remaining),
+            "RateLimit-Reset": str(self.reset_seconds),
+        }
+
+
+def check(r: redis.Redis, key: str, limit: int, window_seconds: int) -> RateLimitStatus:
+    """Count one hit. Raises RateLimitExceeded past the limit; otherwise returns how much is left."""
     now = time.time()
     window_id = int(now // window_seconds)
     redis_key = f"rl:{key}:{window_id}"
+    reset = max(1, window_seconds - int(now % window_seconds))
     try:
         count = r.incr(redis_key)
         if count == 1:
             r.expire(redis_key, window_seconds)
     except redis.exceptions.RedisError:
         logger.warning("Rate limiter: Redis unreachable, failing open for key=%s", key)
-        return
+        return RateLimitStatus(limit, limit, reset)
     if count > limit:
-        retry_after = window_seconds - int(now % window_seconds)
-        raise RateLimitExceeded(max(retry_after, 1))
+        raise RateLimitExceeded(reset, limit)
+    return RateLimitStatus(limit, max(0, limit - count), reset)

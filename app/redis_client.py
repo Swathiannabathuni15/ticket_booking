@@ -5,6 +5,7 @@ socket_connect_timeout/socket_timeout keep a dead Redis from hanging a
 request — callers get a redis.exceptions.RedisError quickly instead of
 waiting on a default (much longer) TCP timeout.
 """
+
 import redis
 
 from app.config import settings

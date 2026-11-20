@@ -4,9 +4,10 @@ app/services/booking_service.py's module docstrings for the two different
 atomicity guarantees (all-or-nothing for Redis holds, fixed lock order for
 the Postgres row locks) and why each is needed.
 """
+
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -138,7 +139,9 @@ def _make_showtime_with_n_seats(db, n: int) -> list[int]:
     db.add(screen)
     db.flush()
     showtime = Showtime(
-        movie_id=movie.id, screen_id=screen.id, starts_at=datetime.now(timezone.utc),
+        movie_id=movie.id,
+        screen_id=screen.id,
+        starts_at=datetime.now(UTC),
         prices={"standard": 10},
     )
     db.add(showtime)
@@ -231,3 +234,48 @@ def _make_showtime_with_n_seats_standalone(n: int) -> list[int]:
     before the deadlock test's two sessions start locking rows."""
     with SessionLocal() as db:
         return _make_showtime_with_n_seats(db, n)
+
+
+def test_cap_holds_even_when_requests_arrive_at_the_same_instant(client, db):
+    """The old check-then-hold let two simultaneous requests both pass the cap. Now the count and the
+    write are one atomic Redis step: 12 parallel single-seat requests -> exactly 8 succeed."""
+    import threading
+
+    import redis as redis_lib
+
+    from app.models import User
+    from app.services import hold_service as holds
+
+    signup_and_login(client, "racer@example.com")
+    user_id = db.query(User).filter(User.email == "racer@example.com").one().id
+    st = make_showtime_with_seats(client, rows=2, seats_per_row=6, price=10)
+    seat_ids = [s["id"] for s in st["seats"]]
+    showtime_of = {sid: st["showtime_id"] for sid in seat_ids}
+    results, barrier = [], threading.Barrier(len(seat_ids))
+
+    def grab(sid):
+        r = redis_lib.Redis(host="localhost", port=6379, db=15, decode_responses=True)
+        barrier.wait()
+        try:
+            holds.acquire_holds(r, [sid], user_id, showtime_of)
+            results.append("held")
+        except holds.HoldCapExceeded:
+            results.append("capped")
+        finally:
+            r.close()
+
+    threads = [threading.Thread(target=grab, args=(sid,)) for sid in seat_ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count("held") == settings.max_held_seats_per_showtime == 8
+    assert results.count("capped") == 4
+
+
+def test_released_seats_free_up_the_cap(client):
+    h = signup_and_login(client, "a@example.com")
+    seat_ids = [s["id"] for s in make_showtime_with_seats(client, rows=2, seats_per_row=5, price=10)["seats"]]
+    hold_seats(client, h, seat_ids[:8])
+    assert client.delete(f"/holds/{seat_ids[0]}", headers=h).status_code == 204
+    assert client.post("/holds", json={"seat_ids": [seat_ids[8]]}, headers=h).status_code == 201

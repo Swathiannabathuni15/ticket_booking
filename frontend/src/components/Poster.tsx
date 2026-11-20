@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Movie } from "../api";
 
 function hash(s: string): number {
@@ -21,7 +22,18 @@ export function wrapTitle(title: string, max = 12): string[] {
  *  art (a gradient + title) so every card has a poster without using anyone's
  *  copyrighted artwork. */
 export default function Poster({ movie, className = "" }: { movie: Pick<Movie, "title" | "genre" | "poster_url">; className?: string }) {
-  if (movie.poster_url) return <img className={`poster ${className}`} src={movie.poster_url} alt={`${movie.title} poster`} loading="lazy" />;
+  // If the image cannot be loaded (blocked network, a host that refuses, a dead link), fall back to
+  // the generated art instead of showing a broken box.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (movie.poster_url && failedUrl !== movie.poster_url) {
+    return (
+      <img
+        className={`poster ${className}`} src={movie.poster_url} alt={`${movie.title} poster`} loading="lazy"
+        referrerPolicy="no-referrer"            /* some image hosts refuse requests that say which page asked */
+        onError={() => setFailedUrl(movie.poster_url)}
+      />
+    );
+  }
   const h = hash(movie.title);
   const h1 = h % 360, h2 = (h1 + 40 + (h >> 8) % 80) % 360;
   const lines = wrapTitle(movie.title);

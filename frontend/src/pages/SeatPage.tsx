@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError, CUR, uuid, when, type Seat, type Showtime } from "../api";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, ApiError, CUR, uuid, when, type Seat, type SeatOption, type Showtime } from "../api";
 import { useAuth } from "../auth";
 import SeatMap, { adjacentRun } from "../components/SeatMap";
 import SeatView from "../components/SeatView";
+import SmartPicks from "../components/SmartPicks";
+
+// The 3D hall is a big library: it is only downloaded when someone opens it.
+const Hall3D = lazy(() => import("../components/Hall3D"));
 import { ErrorBanner, Loading, Notice } from "../components/ui";
 import { errText, mmss, useCountdown } from "../hooks";
 
@@ -32,7 +36,7 @@ function availability(avail: number, total: number): { text: string; cls: string
 
 export default function SeatPage() {
   const showtimeId = Number(useParams().id);
-  const { user } = useAuth();
+  const { user, openSignIn } = useAuth();
   const nav = useNavigate();
   const [seats, setSeats] = useState<Seat[] | null>(null);
   const [showtime, setShowtime] = useState<Showtime | null>(null);
@@ -44,6 +48,10 @@ export default function SeatPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ seat: Seat; sticky: boolean } | null>(null);
+  const [hall3d, setHall3d] = useState<Seat | null>(null);
+  const [picksOpen, setPicksOpen] = useState(false);          // the "Best available" panel
+  const [params] = useSearchParams();
+  const suggested = useRef(params.get("seats"));   // from the seat finder, e.g. ?seats=12,13
   const bookKey = useRef(uuid()); // same key on a double click => one booking
   const left = useCountdown(deadline);
 
@@ -58,6 +66,20 @@ export default function SeatPage() {
       });
     } catch (e) { setError(errText(e)); }
   }, [showtimeId]);
+
+  // Arrived from the seat finder: choose the suggested seats once, if they are still free.
+  useEffect(() => {
+    if (!seats || !suggested.current) return;
+    const ids = suggested.current.split(",").map(Number).filter((n) => Number.isInteger(n));
+    suggested.current = null;
+    const free = ids.length > 0 && ids.every((id) => seats.find((s) => s.id === id)?.status === "available");
+    if (free) {
+      setQty(ids.length); setSelected(new Set(ids));
+      setNotice("We picked these seats for you. Change them any time.");
+    } else if (ids.length > 0) {
+      setNotice("Those seats were just taken. Pick again, or try 'Best available'.");
+    }
+  }, [seats]);
 
   // Live updates: poll while the tab is visible.
   useEffect(() => {
@@ -116,19 +138,16 @@ export default function SeatPage() {
     setSelected(new Set(run.map((s) => s.id)));
   }
 
-  async function bestAvailable() {
-    setBusy(true); setError(null);
-    try {
-      const best = await api.bestSeats(showtimeId, pendingQty);
-      setQty(pendingQty);
-      setSelected(new Set(best.map((s) => s.id)));
-      setNotice(`Best ${pendingQty} seats together: ${best.map((s) => s.label).join(", ")}`);
-    } catch (e) { setError(errText(e)); }
-    finally { setBusy(false); }
+  function chooseOption(o: SeatOption) {
+    setError(null);
+    setQty(o.seat_ids.length);
+    setSelected(new Set(o.seat_ids));
+    setPicksOpen(false);
+    setNotice(`Selected ${o.seat_labels.join(", ")} (${o.labels[0].toLowerCase()}). You can change them any time.`);
   }
 
   async function proceed() {
-    if (!user) { nav("/login", { state: { from: `/showtimes/${showtimeId}` } }); return; }
+    if (!user) { openSignIn(`/showtimes/${showtimeId}`); return; }
     setBusy(true); setError(null);
     try {
       if (selected.size > 0) {
@@ -152,11 +171,13 @@ export default function SeatPage() {
       <div className="show-head">
         <h1>{showtime?.movie_title ?? "Choose your seats"}</h1>
         {showtime && <p className="muted">{showtime.theatre_name} - {showtime.screen_name} | {when(showtime.starts_at)}</p>}
+        {showtime?.price_note && <span className="price-note" title="These prices include this show's pricing">🏷️ {showtime.price_note}</span>}
         {qty !== null && <button className="chip" onClick={() => { setPendingQty(qty); setQty(null); setSelected(new Set()); }}>{qty} {qty === 1 ? "Ticket" : "Tickets"} - change</button>}
+        {qty !== null && <button className="chip" onClick={() => setPicksOpen(true)}>✨ Best available</button>}
       </div>
       <ErrorBanner message={error} onClose={() => setError(null)} />
       {notice && <Notice>{notice}</Notice>}
-      {!user && <Notice><Link to="/login" state={{ from: `/showtimes/${showtimeId}` }}>Log in</Link> to book seats.</Notice>}
+      {!user && <Notice><button className="link" onClick={() => openSignIn(`/showtimes/${showtimeId}`)}>Sign in</button> to book seats.</Notice>}
 
       <SeatMap
         seats={seats} selected={selected} onSeatClick={onSeatClick}
@@ -165,7 +186,8 @@ export default function SeatPage() {
       {preview && (
         <div className="seatview-float">
           <SeatView seats={seats} seat={preview.seat} title={showtime?.movie_title ?? ""}
-            onClose={preview.sticky ? () => setPreview(null) : undefined} />
+            onClose={preview.sticky ? () => setPreview(null) : undefined}
+            onOpen3D={() => { setHall3d(preview.seat); setPreview(null); }} />
         </div>
       )}
 
@@ -175,11 +197,26 @@ export default function SeatPage() {
             <strong>{all.length}</strong> seat{all.length > 1 ? "s" : ""}: {all.map((s) => s.label).join(", ")}
             {mine.length > 0 && left !== null && <span className={`countdown inline ${left < 60 ? "urgent" : ""}`}> - held for {mmss(left)}</span>}
           </div>
-          <button className="big" onClick={() => setPreview({ seat: all[0], sticky: true })}>View from seat</button>
+          <button className="big" onClick={() => setHall3d(all[0])}>View in 3D</button>
           <button className="primary big" disabled={busy} onClick={proceed}>
             {busy ? "Please wait..." : `Pay ${CUR}${total.toFixed(2)}`}
           </button>
         </div>
+      )}
+
+      {hall3d && (
+        <Suspense fallback={<div className="hall3d"><p className="center" style={{ margin: "auto" }}>Loading the 3D hall...</p></div>}>
+          <Hall3D seats={seats} seat={hall3d} title={showtime?.movie_title ?? ""}
+            selectedIds={new Set(all.map((x) => x.id))} onClose={() => setHall3d(null)} />
+        </Suspense>
+      )}
+
+      {picksOpen && qty !== null && (
+        <SmartPicks
+          showtimeId={showtimeId} count={qty} seats={seats}
+          onSelect={chooseOption} onClose={() => setPicksOpen(false)}
+          onPreview3D={(id) => { const seat = seats.find((x) => x.id === id); if (seat) setHall3d(seat); }}
+        />
       )}
 
       {qty === null && (
@@ -205,7 +242,7 @@ export default function SeatPage() {
             </div>
             <div className="modal-actions">
               <button className="primary big" onClick={() => { setQty(pendingQty); setSelected(new Set()); }}>Select seats</button>
-              <button className="big" disabled={busy} onClick={bestAvailable}>Best available</button>
+              <button className="big" onClick={() => { setQty(pendingQty); setSelected(new Set()); setPicksOpen(true); }}>✨ Best available</button>
             </div>
           </div>
         </div>

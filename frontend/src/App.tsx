@@ -15,6 +15,7 @@ import MyBookings from "./pages/MyBookings";
 import SeatPage from "./pages/SeatPage";
 import SharePay from "./pages/SharePay";
 import SplitPage from "./pages/SplitPage";
+import { PublicTicketPage, TicketPage } from "./pages/Ticket";
 
 /** Not signed in? Open the sign-in modal over the page and, once signed in, come back here. */
 function RequireAuth({ children, admin = false }: { children: ReactNode; admin?: boolean }) {
@@ -41,6 +42,8 @@ function Shell() {
           <Route path="/showtimes/:id" element={<SeatPage />} />
           <Route path="/checkout/:id" element={<RequireAuth><Checkout /></RequireAuth>} />
           <Route path="/bookings" element={<RequireAuth><MyBookings /></RequireAuth>} />
+          <Route path="/bookings/:id/ticket" element={<RequireAuth><TicketPage /></RequireAuth>} />
+          <Route path="/ticket/:code" element={<PublicTicketPage />} />
           <Route path="/bookings/:id/split" element={<RequireAuth><SplitPage /></RequireAuth>} />
           <Route path="/admin" element={<RequireAuth admin><Admin /></RequireAuth>} />
           <Route path="/pay/share/:token" element={<SharePay />} />

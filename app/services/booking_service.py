@@ -39,7 +39,8 @@ MULTI-SEAT BOOKING AND WHY THE LOCK ORDER MATTERS
     acquires seat 3 first, so the two transactions simply queue up behind
     each other instead of deadlocking.
 """
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -76,9 +77,7 @@ def find_by_key(db: Session, user_id: int, key: str | None) -> Booking | None:
     """Exposed so the router can skip the hold check on idempotent retries."""
     if not key:
         return None
-    return db.scalar(
-        select(Booking).where(Booking.user_id == user_id, Booking.idempotency_key == key)
-    )
+    return db.scalar(select(Booking).where(Booking.user_id == user_id, Booking.idempotency_key == key))
 
 
 def book_seats(
@@ -102,6 +101,7 @@ def book_seats(
             .where(ShowtimeSeat.id.in_(seat_ids))
             .order_by(ShowtimeSeat.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).all()
         found_ids = {seat.id for seat in seats}
         missing = [sid for sid in seat_ids if sid not in found_ids]
@@ -120,7 +120,7 @@ def book_seats(
         if already_taken:
             raise SeatAlreadyBooked(already_taken[0])
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         booking = Booking(
             user_id=user_id,
             showtime_id=seats[0].showtime_id,
@@ -131,8 +131,7 @@ def book_seats(
         db.add(booking)
         db.flush()  # gives booking.id without committing yet
         db.add_all(
-            BookingSeat(booking_id=booking.id, showtime_seat_id=seat.id, status="pending_payment")
-            for seat in seats
+            BookingSeat(booking_id=booking.id, showtime_seat_id=seat.id, status="pending_payment") for seat in seats
         )
         db.commit()  # commit releases the row locks
         return booking, True
@@ -153,21 +152,22 @@ def book_seats(
 
 def cancel_booking(db: Session, user_id: int, booking_id: int) -> Booking:
     try:
-        booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
+        booking = db.scalar(
+            select(Booking).where(Booking.id == booking_id).with_for_update().execution_options(populate_existing=True)
+        )
         if booking is None:
             raise BookingNotFound(booking_id)
         if booking.user_id != user_id:
             raise NotYourBooking(booking_id)
         if booking.status != "cancelled":
             booking.status = "cancelled"
-            booking.cancelled_at = datetime.now(timezone.utc)
+            booking.cancelled_at = datetime.now(UTC)
             # BookingSeat.status is a denormalized copy - see app/models.py - so
             # it has to be updated in lockstep, in the same transaction.
-            db.execute(
-                update(BookingSeat).where(BookingSeat.booking_id == booking_id).values(status="cancelled")
-            )
+            db.execute(update(BookingSeat).where(BookingSeat.booking_id == booking_id).values(status="cancelled"))
             # A cancelled booking can't be paid for by friends either (A5).
             from app.services import split_service
+
             split_service.cancel_split_for_booking_in_txn(db, booking_id)
             db.commit()
         return booking

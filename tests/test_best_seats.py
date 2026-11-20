@@ -1,4 +1,5 @@
 """Best-available picker and the cached seat map."""
+
 from tests.conftest import make_showtime_with_seats, signup_and_login
 
 
@@ -7,8 +8,8 @@ def test_best_seats_are_adjacent_and_in_one_row(client):
     r = client.get(f"/showtimes/{st['showtime_id']}/best-seats?count=4")
     assert r.status_code == 200
     labels = [s["label"] for s in r.json()]
-    assert len(labels) == 4 and len({l[0] for l in labels}) == 1
-    nums = sorted(int(l[1:]) for l in labels)
+    assert len(labels) == 4 and len({lab[0] for lab in labels}) == 1
+    nums = sorted(int(lab[1:]) for lab in labels)
     assert nums == list(range(nums[0], nums[0] + 4))
 
 

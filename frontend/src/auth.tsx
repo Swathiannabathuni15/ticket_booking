@@ -47,7 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(await api.me());
     const after = modal?.after;
     setModal(null);
-    if (after) nav(after, { replace: true });
+    const to = safeInternalPath(after);
+    if (to) nav(to, { replace: true });
   }, [modal, nav]);
 
   const loginWithPassword = useCallback(async (email: string, password: string) => {
@@ -63,7 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await finish((await api.otpVerify(target, code)).access_token);
   }, [finish]);
 
-  const logout = useCallback(() => { tokenStore.clear(); setUser(null); }, []);
+  const logout = useCallback(() => {
+    // Tell the server first, so a copy of the token stops working too; never let a failure block signing out.
+    api.logout().catch(() => {}).finally(() => { tokenStore.clear(); setUser(null); });
+    setUser(null);
+  }, []);
   const openSignIn = useCallback((after?: string) => setModal({ after }), []);
 
   return (
@@ -72,4 +77,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {modal && <AuthModal onClose={() => setModal(null)} />}
     </Ctx.Provider>
   );
+}
+
+/** Only ever go back to a page on THIS site after signing in: "/bookings" yes; "//evil.com", "/\\evil.com",
+ *  "https://evil.com" no (an "open redirect" would let a link send people to a look-alike site). */
+export function safeInternalPath(path: string | undefined | null): string | null {
+  if (!path || !path.startsWith("/") || path.startsWith("//") || path.includes("\\") || /[\u0000-\u001f]/.test(path)) return null;
+  return path;
 }

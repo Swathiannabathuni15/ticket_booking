@@ -71,7 +71,7 @@ describe("poster + search helpers", () => {
     expect(wrapTitle("Cosmic Kitchen").every((l) => l.length <= 14)).toBe(true);
   });
   it("search matches title, genre and language case-insensitively", () => {
-    const m = { id: 1, title: "Iron Harbour", duration_minutes: 100, poster_url: null, genre: "Action/Crime", language: "Tamil", rating: 8 };
+    const m = { id: 1, title: "Iron Harbour", duration_minutes: 100, poster_url: null, genre: "Action/Crime", language: "Tamil", rating: 8, release_date: null, status: "now_showing" as const };
     expect(matches(m, "tamil")).toBe(true);
     expect(matches(m, "  crime ")).toBe(true);
     expect(matches(m, "romance")).toBe(false);
@@ -133,4 +133,78 @@ describe("uuid works without crypto.randomUUID (a phone on plain http)", () => {
     try { expect(uuid()).toMatch(RE); } finally { Object.defineProperty(globalThis, "crypto", { value: real, configurable: true }); }
   });
   it("uses the native one when available", () => { expect(uuid()).toMatch(RE); });
+});
+
+import { labelTone, viewWord } from "./components/viewQuality";
+describe("smart picks wording", () => {
+  it("turns the 0-100 view score into plain words", () => {
+    expect(viewWord(100).word).toBe("Excellent view");
+    expect(viewWord(80).tone).toBe("good");
+    expect(viewWord(60).word).toBe("Fair view");
+    expect(viewWord(30)).toEqual({ word: "Poor view", tone: "poor" });
+  });
+  it("colours each kind of option label", () => {
+    expect(labelTone("Best view")).toBe("view");
+    expect(labelTone("Best value")).toBe("value");
+    expect(labelTone("Cheapest")).toBe("cheap");
+    expect(labelTone("Closest to your budget")).toBe("warn");
+    expect(labelTone("Also good")).toBe("plain");
+  });
+});
+
+import { ticketCodeFrom } from "./api";
+
+describe("ticketCodeFrom (what a scanned QR code or typed text means)", () => {
+  it("reads the code out of the ticket link", () => {
+    expect(ticketCodeFrom("https://example.com/ticket/ABCD-EFGH-JK23")).toBe("ABCD-EFGH-JK23");
+  });
+  it("accepts typed codes in any case, with spaces or no dashes", () => {
+    expect(ticketCodeFrom("abcd efgh jk23")).toBe("ABCD-EFGH-JK23");
+    expect(ticketCodeFrom("ABCDEFGHJK23")).toBe("ABCD-EFGH-JK23");
+  });
+  it("refuses anything that cannot be a ticket", () => {
+    expect(ticketCodeFrom("hello")).toBeNull();
+    expect(ticketCodeFrom("OOOO-OOOO-OOOO")).toBeNull();   // O, 0, I, 1 are never used
+    expect(ticketCodeFrom("https://evil.example/login")).toBeNull();
+  });
+});
+
+import { safeInternalPath } from "./auth";
+
+describe("safeInternalPath (where to go after signing in)", () => {
+  it("allows pages on this site", () => {
+    expect(safeInternalPath("/bookings/3/ticket")).toBe("/bookings/3/ticket");
+  });
+  it("refuses anything that could leave the site", () => {
+    for (const bad of ["//evil.com", "/\\evil.com", "https://evil.com", "evil.com", "/\t/evil.com", "", undefined])
+      expect(safeInternalPath(bad)).toBeNull();
+  });
+});
+
+import { niceMax } from "./pages/admin/Dashboard";
+import { toMinutes } from "./pages/admin/Pricing";
+
+describe("dashboard axis and pricing helpers", () => {
+  it("rounds the axis up to a readable number", () => {
+    expect(niceMax(0)).toBe(1);
+    expect(niceMax(7)).toBe(10);
+    expect(niceMax(1234)).toBe(2000);
+    expect(niceMax(30000)).toBe(50000);
+    expect(niceMax(250)).toBe(250);
+  });
+  it("turns a time box into minutes after midnight", () => {
+    expect(toMinutes("18:30")).toBe(1110);
+    expect(toMinutes("00:00")).toBe(0);
+    expect(toMinutes("")).toBeNull();
+  });
+});
+
+import { withReference } from "./api";
+
+describe("withReference", () => {
+  it("adds the request id to server errors only", () => {
+    expect(withReference(500, "Oops.", { request_id: "3f2a9c1b77" })).toBe("Oops. (Reference: 3f2a9c1b)");
+    expect(withReference(404, "Not found.", { request_id: "3f2a9c1b77" })).toBe("Not found.");
+    expect(withReference(500, "Oops.", null)).toBe("Oops.");
+  });
 });

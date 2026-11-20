@@ -18,14 +18,15 @@ WHAT THIS CANNOT DO
     - On iPhone it only works for a site added to the Home Screen (iOS 16.4+).
     - It is not SMS. Texting a phone number needs a paid SMS provider.
 """
+
 import base64
 import json
 import logging
 import os
 import stat
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Callable
 from urllib.parse import quote
 
 from cryptography.hazmat.primitives import serialization
@@ -40,6 +41,7 @@ from app.models import Booking, PushSubscription, ReminderSent, Showtime
 
 log = logging.getLogger(__name__)
 KEY_FILE = Path(__file__).resolve().parents[2] / ".vapid_keys.json"
+_memory_keys: dict | None = None
 
 
 class SubscriptionGone(Exception):
@@ -64,11 +66,20 @@ def get_keys() -> dict:
         return {"private": settings.vapid_private_key, "public": settings.vapid_public_key}
     if KEY_FILE.exists():
         return json.loads(KEY_FILE.read_text())
-    keys = generate_keys()
-    KEY_FILE.write_text(json.dumps(keys))
-    os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # private key: owner only
-    log.info("Generated new VAPID keys in %s", KEY_FILE)
-    return keys
+    global _memory_keys
+    if _memory_keys is None:
+        _memory_keys = generate_keys()
+        try:
+            KEY_FILE.write_text(json.dumps(_memory_keys))
+            os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # private key: owner only
+            log.info("Generated new VAPID keys in %s", KEY_FILE)
+        except OSError:
+            log.warning(
+                "Generated TEMPORARY VAPID keys (cannot write %s). Notification subscriptions will stop "
+                "working after a restart: set VAPID_PRIVATE_KEY and VAPID_PUBLIC_KEY.",
+                KEY_FILE,
+            )
+    return _memory_keys
 
 
 def _real_send(sub: PushSubscription, payload: dict) -> None:
@@ -120,17 +131,22 @@ def send_to_user(db: Session, user_id: int, payload: dict) -> int:
 def send_due_reminders(db: Session, now: datetime | None = None) -> int:
     """Notify owners of paid bookings whose show starts within reminder_minutes.
     Once per booking (reminders_sent.booking_id is UNIQUE). Returns bookings notified."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     soon = now + timedelta(minutes=settings.reminder_minutes)
     due = db.scalars(
-        select(Booking).join(Showtime, Showtime.id == Booking.showtime_id)
-        .where(Booking.status == "confirmed", Showtime.starts_at > now, Showtime.starts_at <= soon,
-               ~select(ReminderSent.id).where(ReminderSent.booking_id == Booking.id).exists(),
-               select(PushSubscription.id).where(PushSubscription.user_id == Booking.user_id).exists())
+        select(Booking)
+        .join(Showtime, Showtime.id == Booking.showtime_id)
+        .where(
+            Booking.status == "confirmed",
+            Showtime.starts_at > now,
+            Showtime.starts_at <= soon,
+            ~select(ReminderSent.id).where(ReminderSent.booking_id == Booking.id).exists(),
+            select(PushSubscription.id).where(PushSubscription.user_id == Booking.user_id).exists(),
+        )
     ).all()
     sent = 0
     for b in due:
-        try:                          # CLAIM the reminder: the UNIQUE booking_id lets only one worker win
+        try:  # CLAIM the reminder: the UNIQUE booking_id lets only one worker win
             claim = ReminderSent(booking_id=b.id)
             db.add(claim)
             db.commit()
@@ -147,7 +163,7 @@ def send_due_reminders(db: Session, now: datetime | None = None) -> int:
         }
         if send_to_user(db, b.user_id, payload) > 0:
             sent += 1
-        else:                         # nobody accepted it: release the claim so the next run retries
+        else:  # nobody accepted it: release the claim so the next run retries
             db.delete(db.get(ReminderSent, claim.id))
             db.commit()
     return sent

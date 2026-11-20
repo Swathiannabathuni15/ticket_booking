@@ -13,13 +13,19 @@ These are the parts that go beyond a basic booking site.
 1. **Split the bill with friends.** After you pay, send each friend a link. They pay their share without making an account. Shares always add up to the exact total, and if you cancel, friends who already paid get their money back.
 2. **A payment that is safe even if the network breaks.** Every payment attempt gets its own unique ID. If your phone switches off right after you press Pay, you are never charged twice, and the bank tells our server the result by itself, so your booking still gets confirmed.
 3. **See the view from your seat.** Hover over a seat (or long-press on a phone) to see a picture of what the screen looks like from there.
-4. **Smart seat picking.** Choose how many seats you need, click once, and a group of seats next to each other is selected. Or press "Best available" and we pick good ones for you.
+4. **Smart seat picking.** Choose how many seats you need and click once: a group of seats next to each other is selected. Or press **Best available** for a few real choices (best view, best value, cheapest). Each one shows how well you would see the screen, the price, where it sits on a tiny hall map, and the reasons. It also thinks about the awkward cases: your budget, aisle seats, not leaving one lonely empty seat beside you, never mixing price tiers, and what to do when nothing fits together.
 5. **An AI assistant that can't spend your money.** Ask it to find a movie or hold seats. It has no way to pay, so even a trick can't make it charge you.
 6. **Fair rate limits.** Limits are counted per person (email, phone number or account), not per internet address. Too many tries gets a "slow down" reply.
 7. **Proven under load.** We tested 1,000 users fighting for 260 seats. Zero seats were double booked.
 8. **Real notifications before your movie.** Turn on reminders once and you get a system notification (like any app) 15 minutes before a show you paid for: "Have you reached the theatre?", with Directions and "I'm here" buttons. It works even when the website is closed.
 9. **Directions to the theatre.** One tap opens Google Maps with the route from where you are, and a small map shows on your confirmed booking. No API key needed.
 10. **Stay signed in.** Sign in once and you stay signed in for 30 days. Every time you open the site the 30 days start again.
+11. **A real 3D hall.** Tap "View in 3D" to see the hall from your seat's real position and height (drag to look around), or switch to the whole-hall overview and tap any seat to sit there. Built from our own seat layout.
+12. **A seat finder.** On a movie page, find the best free seats together in every upcoming show: centre seats only, not too close, a price cap, and morning, afternoon, evening or night.
+13. **Always-current listings.** 10 cities with several theatres each, "Now showing" and "Coming soon" rows, and a rolling schedule that keeps the next few days stocked with showtimes.
+14. **QR e-tickets and a confirmation email.** When you pay, you get a ticket with a QR code (in **My bookings**, under **E-ticket**). It shows the movie, time, theatre, seats and amount, with buttons for Email me, Add to calendar, Print and Directions. If your account has an email address and email is set up, the same ticket (QR code, calendar file and all) is emailed to you, exactly once. At the door, staff open **Admin > Check-in**, scan the QR code (or type the code under it) and get a big green ADMIT or red DO NOT ADMIT. A ticket can only be used once, even if two staff scan it at the same moment, and a cancelled booking's ticket stops working.
+15. **Weekend and evening prices.** In **Admin > Pricing**, add rules like "Weekend +20%", "Evening 6pm to 11pm +10%" or "Morning shows -15%", for all seats or one seat type. Matching rules add up, and a "Try it" box shows what a show would cost. Rules set the price of new showtimes only, so a price someone has already seen never changes. The seat page shows a tag like "Weekend +20%".
+16. **An admin dashboard.** **Admin > Dashboard** shows revenue, tickets sold, average ticket price and how many started bookings got paid, a bar chart per day for revenue and for bookings (or the same as a table), how full every show is, and the top movies. Only paid bookings count, and days follow the cinema's clock.
 
 Also included: city picker, movie posters, Telugu movies, email or phone-code sign in, a small admin area, and a white page with a soft moving background.
 
@@ -60,12 +66,29 @@ python scripts/seed_demo.py
 python scripts/seed_telugu.py
 ```
 
-**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones with IMDb data, get a free key at omdbapi.com/apikey.aspx (click the activation link in the email, the key doesn't work before that), then run:
+Then give every city several theatres and stock the next few days with showtimes (this talks to the database directly, so the backend doesn't need to be running):
 ```
-OMDB_API_KEY=your-key python scripts/fetch_posters.py all --source omdb --language Telugu
+python scripts/seed_cities.py
+```
+Showtimes are generated, so they run out. Keep them coming with either of these:
+```
+python scripts/schedule_showtimes.py          # run it once a day (adds only what is missing)
+```
+or set `AUTO_SCHEDULE_DAYS=4` in `.env` and the server's background loop does it every hour.
+
+**A current movie list (optional).** To pull "now playing in India" and "coming soon" from TMDB (the official free movie database; needs a free key, and some networks block it, so step 1 can run on another device):
+```
+TMDB_API_KEY=your-key python scripts/sync_catalog.py fetch catalog.json     # where TMDB opens
+python scripts/sync_catalog.py apply catalog.json                           # where the app is
+```
+It adds new movies, fills in release dates, real runtimes, genres and ratings, and a future release date puts a movie under "Coming soon". It supplies the movie list only. Showtimes stay generated.
+
+**Real posters (optional).** Posters are drawn from the movie title by default. To get the real ones, make a free account at themoviedb.org, create an API key (Settings > API), put it in your `.env` file as `TMDB_API_KEY=your-key`, and run:
+```
+python scripts/fetch_posters.py all --language Telugu
 ```
 `--language Telugu` keeps it to the real Telugu releases. The made-up demo movies (Midnight Express and so on) share names with real films, so leave them alone.
-It also fills in the IMDb rating, runtime and genre. It only uses a poster when the match is certain, and lists the ones it was unsure about, so you can set those by hand in the Admin page. Small regional films are often missing from OMDb. The posters are linked from IMDb's image server, which is fine for a personal demo project but is not licensed for a commercial product. (TMDB works too: `--source tmdb`, but some networks block it.)
+It also fills in the real runtime, genre and rating. It only uses a poster when the match is certain (same title, right language, a 2026 release), and lists the ones it was unsure about, so you can set those by hand in the Admin page. Small regional films are often missing from TMDB. If your network blocks TMDB, the docs at the top of `scripts/fetch_posters.py` show how to do the lookup step on another device. The posters are linked from TMDB's image server, and the website footer carries the credit TMDB asks for.
 
 **6. Start the website** (another new terminal)
 ```
@@ -82,9 +105,10 @@ npm run dev
 2. Choose how many seats, then click a seat.
 3. Press **Pay**, sign in (with a phone number, the code is shown on screen), and pay.
 4. On the payment page, try the **Demo card** menu. "Bank charges, but the reply is lost" shows the safe-payment feature: the page says "Confirming..." and a few seconds later the booking confirms by itself.
-5. Press **Split the bill**, add friends, and open a link in a private window to pay as a friend.
-6. Try the notification: click your email at the top right, press **Turn on ticket reminders**, allow it, then press **Send a test**. For the real thing, run `python scripts/demo_reminder.py` (makes a show starting in 12 minutes), book and pay for it, and make sure the two programs above are running. A notification appears when it is 15 minutes away.
-7. Admin login: `admin@demo-cinema.com` / `demo-password-1`.
+5. Press **View e-ticket** to see your QR ticket. Then sign in as the admin (step 8), open **Admin > Check-in** and type the code under the QR code: the first time it says ADMIT, the second time DO NOT ADMIT. (Shows more than 3 hours away say "entry is not open yet", which is correct.) The QR code opens `http://localhost:5173/ticket/<code>`, so it only works from a phone if you set `PUBLIC_BASE_URL` to an address the phone can reach (see "Use it on your phone").
+6. Press **Split the bill**, add friends, and open a link in a private window to pay as a friend.
+7. Try the notification: click your email at the top right, press **Turn on ticket reminders**, allow it, then press **Send a test**. For the real thing, run `python scripts/demo_reminder.py` (makes a show starting in 12 minutes), book and pay for it, and make sure the two programs above are running. A notification appears when it is 15 minutes away.
+8. Admin login: `admin@demo-cinema.com` / `demo-password-1`.
 
 ## Optional
 
@@ -98,6 +122,32 @@ npm run dev
   GEMINI_API_KEY=your-key-here
   ```
   (Free key from Google AI Studio. `ANTHROPIC_API_KEY=...` works too. If both are set, Gemini is used.) Without a key, the chat says the assistant is not set up. `.env` is never committed to git.
+
+## Pay with Razorpay (test mode)
+
+Out of the box payments use a **fake bank** (no keys, no real anything). To try real payment pages with **no real money**, use Razorpay's free test keys:
+
+1. Make a free Razorpay account and, in the dashboard, switch to **Test Mode**. Go to Settings > API Keys > Generate Test Key. You get a Key Id (`rzp_test_...`) and a Key Secret.
+2. In the dashboard turn on **automatic payment capture** (Settings > Configuration > Payment Capture), or the money stays "authorized" and is never taken.
+3. Put the keys in your `.env` file (never in git) and restart the backend:
+   ```
+   PAYMENT_PROVIDER=razorpay
+   RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxxxx
+   RAZORPAY_KEY_SECRET=your-key-secret
+   RAZORPAY_WEBHOOK_SECRET=any-long-random-text-you-choose
+   ```
+   On a real server, keep the secrets in a secret store instead of a file (for example **Azure Key Vault**, injected as environment variables). The app only reads environment variables, so nothing changes in the code.
+4. **Webhook** (so a payment is confirmed even if the customer closes the page): in the dashboard go to Settings > Webhooks > Add. The URL is `https://<your-public-address>/api/v1/webhooks/razorpay`, the secret is the same `RAZORPAY_WEBHOOK_SECRET`, and tick `payment.captured`, `payment.failed` and `order.paid`. Razorpay cannot reach `localhost`, so for local testing use a tunnel such as ngrok or cloudflared. Without a webhook everything still works: the page confirms the payment itself, and the background job checks with Razorpay every 30 seconds for any it missed.
+5. Pay with Razorpay's test cards and UPI ids (listed in their docs, "Test Card Details"). The page then says "Confirming..." and shows your e-ticket.
+
+How it stays safe:
+- The server creates **one order per booking** for the exact price from our database, and **saves the order id before the payment window opens**. Pressing Pay twice, reloading or opening two tabs always gives the same order, never a second one.
+- The browser's "I paid" counts only with Razorpay's signature (made with the key secret), and the webhook only with its own signature. Each webhook event is processed once (its id is stored), and a payment of a different amount than the booking is refused.
+- If money arrives after the booking expired, it is **refunded automatically**. If that refund call fails, the background job retries it.
+- While Razorpay is the provider, the fake card endpoint is switched **off**, so nobody can "pay" with the demo card.
+- With `ENVIRONMENT=production` the server refuses to start with the fake bank or without the keys.
+
+Not covered yet: the split-the-bill friend shares still use the fake ledger, and cancelling an already paid booking does not refund it.
 
 ## Use it on your phone
 
@@ -116,6 +166,7 @@ To open it from a phone on the **same Wi-Fi** as your laptop:
    npm run dev:phone
    ```
 4. On the phone open `http://192.168.1.20:5173` (your address, port 5173).
+5. So that QR codes on tickets open on the phone too, add `PUBLIC_BASE_URL=http://192.168.1.20:5173` to `.env` and restart the backend. (Tickets made before the change keep the same code; the QR picture just points at the new address.)
 
 If it doesn't open: some office or guest Wi-Fi blocks devices from talking to each other, and a firewall on the laptop can block ports 5173 and 8000. A phone hotspot shared with the laptop works around the first problem. Only use this on a network you trust.
 
@@ -134,6 +185,8 @@ SMTP_PASSWORD=your-16-letter-app-password
 SMTP_FROM=you@gmail.com
 ```
 On the sign-in window choose "Continue with Email" then "Email me a code instead".
+
+The same settings also send the **booking confirmation email** with the QR e-ticket and a calendar file. It is sent right after payment, in the background, so a slow mail server never slows down paying. If sending fails, the background jobs try again every round (for up to a day after the payment), and each booking is emailed only once. People who signed in with a phone number have no email address, so they just use the ticket in **My bookings**.
 
 **By SMS** needs a paid account with an SMS company:
 ```
@@ -159,6 +212,14 @@ python -m pytest -q        # backend
 cd frontend && npm test    # frontend
 ```
 
+Code checks (the same ones CI runs). Install them once with `pip install -r requirements-dev.txt`:
+```
+ruff check . && ruff format --check .   # lint and formatting
+mypy                                    # type checks
+pip-audit -r requirements.txt           # known security holes in Python packages
+cd frontend && npm audit --omit=dev     # the same for the website
+```
+
 ## Load test result
 
 1,000 users, 260 seats, on one laptop that also ran the test tools:
@@ -180,10 +241,22 @@ The second test mostly shows one laptop running out of power. To run it yourself
 - **Notifications on a phone need https.** Browsers only allow them on `https://` addresses (and `localhost`, which is only your own computer). So they work on this laptop now, but a phone can only get them after the site is put online with https. On an iPhone you must also "Add to Home Screen" first. If notifications are not turned on, a small popup appears instead while the site is open.
 - **This is not SMS.** Texting a phone number needs a paid SMS service.
 - **Directions** find the theatre by its name and city using Google Maps. A very new or oddly named theatre may need its name fixed.
-- **The "view from seat" picture** is an illustration, not a real photo of the cinema.
+- **The "view from seat" picture and the 3D hall** are built from the hall's layout, not a real photo or scan of the cinema. The distances are assumptions.
+- **Showtimes and theatres are generated.** Real listings from real cinemas need an agreement with the cinemas or a data company. Theatre names are made up.
 - **Visitors who aren't signed in** are not rate limited on public pages, because there is no account to count.
 - **The Docker files** for running everything together were written but never tried.
 - The website has been tested by code, but not carefully clicked through by a person.
+
+## Known limits I plan to fix later
+
+These are real, and I know about them. None of them lets a seat be sold twice.
+
+- **Locking someone out.** Sign-in is limited per email, so someone can type wrong passwords for your email and block your sign-in for a minute. The usual fix is a captcha.
+- **The 8-seat hold limit has a small gap.** Two requests at the same instant could briefly hold more than 8 seats (the booking itself is still capped at 8).
+- **Rate-limit counters reset every minute,** so a short double burst is possible across the boundary.
+- **Booking status is copied onto each seat row** so the database can enforce "one active booking per seat". Any new code that changes a booking's status must update that copy too.
+
+Fixed already: logging out really ends the session (a stolen copy of the login stops working), a session can be renewed for at most 90 days, the test-card menu is off when `GATEWAY_ALLOW_TEST_METHODS=false`, and the seed scripts refuse the public demo admin password on a real server.
 
 ## Problems?
 
@@ -194,4 +267,5 @@ The second test mostly shows one laptop running out of power. To run it yourself
 | Seat holds fail | Redis is not running. |
 | Can't connect to database | PostgreSQL is not running. |
 | TMDB site or poster script "can't be reached" | Some internet providers block TMDB. Change your DNS to 1.1.1.1 (Settings > Network > your Wi-Fi > IPv4 > DNS) or turn on Secure DNS in Chrome, or use a phone hotspot. |
-| Chat says "not configured" | Add `ANTHROPIC_API_KEY` as described above. |
+| Chat says "not configured" | Add `GEMINI_API_KEY` (or `ANTHROPIC_API_KEY`) to `.env` as described above and restart the backend. |
+| No movie or showtime is listed | Showtimes run out. Run `python scripts/schedule_showtimes.py`. |

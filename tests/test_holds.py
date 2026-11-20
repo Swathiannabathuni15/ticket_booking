@@ -1,7 +1,8 @@
 """Seat holds: the Redis-backed reservation that gates booking."""
+
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis
 
@@ -124,7 +125,9 @@ def test_100_users_race_for_one_hold_exactly_one_wins(db):
     db.add(screen)
     db.flush()
     showtime = Showtime(
-        movie_id=movie.id, screen_id=screen.id, starts_at=datetime.now(timezone.utc),
+        movie_id=movie.id,
+        screen_id=screen.id,
+        starts_at=datetime.now(UTC),
         prices={"standard": 10},
     )
     db.add(showtime)
@@ -139,7 +142,7 @@ def test_100_users_race_for_one_hold_exactly_one_wins(db):
     def try_hold(user_id: int) -> str:
         r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
         try:
-            holds.acquire_holds(r, [seat_id], user_id)
+            holds.acquire_holds(r, [seat_id], user_id, {seat_id: showtime.id})
             return "won"
         except holds.SeatHeldByOther:
             return "lost"
@@ -173,9 +176,7 @@ def test_redis_down_holds_fail_closed_but_login_still_works(client, db):
         book_resp = client.post("/bookings", json={"seat_ids": [seat_id]}, headers=h)
         assert book_resp.status_code == 503
 
-        login_resp = client.post(
-            "/auth/login", json={"email": "a@example.com", "password": "password123"}
-        )
+        login_resp = client.post("/auth/login", json={"email": "a@example.com", "password": "password123"})
         assert login_resp.status_code == 200
     finally:
         app.dependency_overrides[get_redis] = _test_redis

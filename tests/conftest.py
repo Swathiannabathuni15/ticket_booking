@@ -36,11 +36,13 @@ def _schema():
     # Downgrading old migrations can't re-add NOT NULL columns to tables that
     # still hold rows from the last test, so empty everything first.
     with engine.begin() as conn:
-        conn.execute(text(
-            "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, "
-            "bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, screens, theatres, "
-            "movies, users RESTART IDENTITY CASCADE"
-        ))
+        conn.execute(
+            text(
+                "TRUNCATE pricing_rules, reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, "
+                "bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, screens, theatres, "
+                "movies, users RESTART IDENTITY CASCADE"
+            )
+        )
     command.downgrade(alembic_cfg, "base")
 
 
@@ -48,11 +50,14 @@ def _schema():
 def _clean_tables():
     """Empty every table before each test so tests don't affect each other."""
     with engine.begin() as conn:
-        conn.execute(text(
-            "TRUNCATE reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, "
-            "screens, theatres, movies, users RESTART IDENTITY CASCADE"
-        ))
+        conn.execute(
+            text(
+                "TRUNCATE pricing_rules, reminders_sent, push_subscriptions, webhook_events, gateway_charges, payment_attempts, ledger_entries, split_shares, bill_splits, payments, booking_seats, bookings, showtime_seats, showtimes, "
+                "screens, theatres, movies, users RESTART IDENTITY CASCADE"
+            )
+        )
     from app.routers.showtimes import clear_seat_cache
+
     clear_seat_cache()  # ids restart from 1 after TRUNCATE, so a stale cache would lie
     yield
 
@@ -118,9 +123,7 @@ def db():
 
 def signup_and_login(client: TestClient, email: str, password: str = "password123") -> dict:
     client.post("/auth/signup", json={"email": email, "password": password})
-    token = client.post("/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
+    token = client.post("/auth/login", json={"email": email, "password": password}).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -136,7 +139,11 @@ def admin_headers(client: TestClient, email: str = "admin@example.com") -> dict:
 
 
 def make_showtime_with_seats(
-    client: TestClient, rows: int = 1, seats_per_row: int = 1, price: float = 10.0
+    client: TestClient,
+    rows: int = 1,
+    seats_per_row: int = 1,
+    price: float = 10.0,
+    starts_at: str = "2030-01-01T18:00:00",
 ) -> dict:
     """Admin-creates a movie, theatre, screen and showtime in one call, and
     returns the showtime id plus its seats (as returned by GET
@@ -144,16 +151,14 @@ def make_showtime_with_seats(
     needs to get a bookable seat_id without repeating the catalogue setup.
     """
     headers = admin_headers(client, email=f"catalog-admin-{uuid4().hex}@example.com")
-    movie_id = client.post(
-        "/movies", json={"title": "Test Movie", "duration_minutes": 120}, headers=headers
-    ).json()["id"]
-    theatre_id = client.post(
-        "/theatres", json={"name": "Test Theatre", "city": "Testville"}, headers=headers
-    ).json()["id"]
-    row_letters = "ABCDEFGHIJ"
-    screen_rows = [
-        {"row": row_letters[i], "seats": ["standard"] * seats_per_row} for i in range(rows)
+    movie_id = client.post("/movies", json={"title": "Test Movie", "duration_minutes": 120}, headers=headers).json()[
+        "id"
     ]
+    theatre_id = client.post("/theatres", json={"name": "Test Theatre", "city": "Testville"}, headers=headers).json()[
+        "id"
+    ]
+    row_letters = "ABCDEFGHIJ"
+    screen_rows = [{"row": row_letters[i], "seats": ["standard"] * seats_per_row} for i in range(rows)]
     screen_id = client.post(
         "/screens",
         json={"theatre_id": theatre_id, "name": "Screen 1", "rows": screen_rows},
@@ -164,7 +169,7 @@ def make_showtime_with_seats(
         json={
             "movie_id": movie_id,
             "screen_id": screen_id,
-            "starts_at": "2030-01-01T18:00:00",
+            "starts_at": starts_at,
             "prices": {"standard": price},
         },
         headers=headers,

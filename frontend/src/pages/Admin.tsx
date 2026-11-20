@@ -1,5 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { api, money, when } from "../api";
+import CheckInDesk from "./admin/CheckIn";
+import Dashboard from "./admin/Dashboard";
+import Pricing from "./admin/Pricing";
 import { ErrorBanner, Notice, StatusBadge } from "../components/ui";
 import { errText, useLoad } from "../hooks";
 
@@ -10,16 +13,26 @@ function seatTypes(layout: unknown[]): string[] {
   return [...types];
 }
 
+type Tab = "dashboard" | "pricing" | "showtime" | "bookings" | "checkin";
+const TABS: [Tab, string][] = [
+  ["dashboard", "Dashboard"], ["pricing", "Pricing"], ["showtime", "Create showtime"], ["bookings", "Bookings"], ["checkin", "Check-in"],
+];
+
 export default function AdminPage() {
-  const [tab, setTab] = useState<"showtime" | "bookings">("showtime");
+  const [tab, setTab] = useState<Tab>("dashboard");
   return (
     <>
       <h1>Admin</h1>
-      <div className="seg">
-        <button className={tab === "showtime" ? "primary" : ""} onClick={() => setTab("showtime")}>Create showtime</button>
-        <button className={tab === "bookings" ? "primary" : ""} onClick={() => setTab("bookings")}>Bookings</button>
+      <div className="seg tabs" role="tablist">
+        {TABS.map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "primary" : ""} onClick={() => setTab(key)}>{label}</button>
+        ))}
       </div>
-      {tab === "showtime" ? <ShowtimeForm /> : <Bookings />}
+      {tab === "dashboard" && <Dashboard />}
+      {tab === "pricing" && <Pricing />}
+      {tab === "showtime" && <ShowtimeForm />}
+      {tab === "bookings" && <Bookings />}
+      {tab === "checkin" && <CheckInDesk />}
     </>
   );
 }

@@ -1,5 +1,6 @@
 """Web Push endpoints: the website sends us the device's subscription; we use it
 to deliver "your movie starts soon" notifications (app/services/push_service.py)."""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -47,8 +48,9 @@ def subscribe(body: SubscribeIn, db: Session = Depends(get_db), user: User = Dep
 
 @router.delete("/subscribe")
 def unsubscribe(body: UnsubscribeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    sub = db.scalar(select(PushSubscription).where(
-        PushSubscription.endpoint == body.endpoint, PushSubscription.user_id == user.id))
+    sub = db.scalar(
+        select(PushSubscription).where(PushSubscription.endpoint == body.endpoint, PushSubscription.user_id == user.id)
+    )
     if sub is not None:
         db.delete(sub)
         db.commit()
@@ -58,9 +60,18 @@ def unsubscribe(body: UnsubscribeIn, db: Session = Depends(get_db), user: User =
 @router.post("/test")
 def send_test(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Send a test notification to all of my devices."""
-    sent = push_service.send_to_user(db, user.id, {
-        "title": "Reminders are on", "body": "You'll get a notification 15 minutes before your movie.",
-        "tag": "test", "url": "/bookings"})
+    sent = push_service.send_to_user(
+        db,
+        user.id,
+        {
+            "title": "Reminders are on",
+            "body": "You'll get a notification 15 minutes before your movie.",
+            "tag": "test",
+            "url": "/bookings",
+        },
+    )
     if sent == 0:
-        raise HTTPException(status.HTTP_409_CONFLICT, "No device could be reached. Turn on reminders in this browser first.")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "No device could be reached. Turn on reminders in this browser first."
+        )
     return {"sent": sent}

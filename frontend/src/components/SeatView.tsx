@@ -46,9 +46,9 @@ function rnd(seed: number) { // tiny deterministic PRNG so the "audience" doesn'
   return x - Math.floor(x);
 }
 
-type Props = { seats: Seat[]; seat: Seat; title: string; onClose?: () => void };
+type Props = { seats: Seat[]; seat: Seat; title: string; onClose?: () => void; onOpen3D?: () => void };
 
-export default function SeatView({ seats, seat, title, onClose }: Props) {
+export default function SeatView({ seats, seat, title, onClose, onOpen3D }: Props) {
   const { rowIdx, nRows, colIdx, nCols } = locateSeat(seats, seat);
   const g = seatGeometry(rowIdx, nRows, colIdx, nCols);
   const px = (x: number, d: number) => VW / 2 + (F * (x - g.xOffset)) / d;
@@ -79,6 +79,7 @@ export default function SeatView({ seats, seat, title, onClose }: Props) {
       <div className="seatview-head">
         <strong>View from {seat.label}</strong>
         <span className="muted"> {seat.seat_type}</span>
+        {onOpen3D && <button className="link open3d" onClick={onOpen3D}>Open 3D hall</button>}
         {onClose && <button className="link" onClick={onClose} aria-label="Close preview">close</button>}
       </div>
       <svg viewBox={`0 0 ${VW} ${VH}`} role="img" aria-label={`Preview of the view from seat ${seat.label}`}>
